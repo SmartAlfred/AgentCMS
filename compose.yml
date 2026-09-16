@@ -1,0 +1,53 @@
+# Local development stack (#2): Postgres 16 + MinIO. The API itself runs on the
+# host with reload (`make dev`) so tracebacks and debugging stay native.
+name: agentcms
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: agentcms-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentcms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentcms}
+      POSTGRES_DB: ${POSTGRES_DB:-agentcms}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentcms} -d ${POSTGRES_DB:-agentcms}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - log_statement=none
+
+  # Opt-in: storage is only needed from #20 (media API) onwards, so it lives
+  # behind a compose profile and `make dev` never depends on it.
+  #   docker compose --profile storage up -d   (or: make up-storage)
+  minio:
+    image: minio/minio:latest
+    container_name: agentcms-minio
+    profiles: ["storage"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-agentcms}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-agentcms-dev-secret}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  pgdata:
+  miniodata:

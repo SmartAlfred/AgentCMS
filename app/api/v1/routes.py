@@ -1,0 +1,25 @@
+"""Mounted versioned API surface (#2 stub, implemented by #4).
+
+The router lives here so the application factory has a single seam for
+``/v1``; the route modules themselves are imported by #4 (posts), #5 (tokens)
+and later tickets, which keeps the ``/v1`` prefix in one place.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter
+
+router = APIRouter()
+
+
+@router.get(
+    "/info",
+    summary="API version info",
+    tags=["ops"],
+    response_description="The API version and status.",
+)
+def v1_info() -> dict[str, Any]:
+    """Return version metadata for the v1 API surface."""
+    return {"version": "v1", "status": "active"}
