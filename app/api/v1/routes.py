@@ -13,6 +13,10 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
+from app.api.v1.posts import router as posts_router  # noqa: E402
+
+router.include_router(posts_router)
+
 
 @router.get(
     "/info",

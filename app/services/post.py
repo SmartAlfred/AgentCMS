@@ -1,0 +1,484 @@
+"""Post CRUD service (#4).
+
+All business rules for creating, reading, updating, publishing, unpublishing
+and trashing posts live here.  The HTTP layer is a thin adapter that maps
+these operations to endpoints; this module owns the invariants.
+
+Design principles (from the ticket):
+* Create **never** publishes; ``status`` in the request body is ignored.
+* Title may be omitted — derived from the first ``# H1`` in ``body_md``.
+* Slug may be omitted — slugified from title; duplicates return 409 with
+  ``suggested_slug``.
+* Listing uses cursor pagination.
+* Publish is idempotent (no-op when already published).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
+
+from app.domain.errors import (
+    ContentRequiredError,
+    InvalidCursorError,
+    InvalidTransitionError,
+    PostNotFoundError,
+    SiteNotFoundError,
+    SlugConflictError,
+    SlugInvalidError,
+    TitleRequiredError,
+)
+from app.models.post import Post
+from app.models.post_revision import PostRevision
+from app.models.site import Site
+from app.models.tag import PostTag, Tag
+
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_TITLE_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
+
+DEFAULT_LIMIT = 20
+MAX_LIMIT = 100
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _slugify(text: str) -> str:
+    """Turn a title into a URL-friendly slug."""
+    slug = text.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    return slug.strip("-")[:256]
+
+
+def _derive_title(body_md: str) -> str | None:
+    """Extract the first ``# Heading`` from body_md."""
+    match = _TITLE_RE.search(body_md)
+    return match.group(1).strip() if match else None
+
+
+def _slug_conflict_slug(base_slug: str, session: Session, site_id: uuid.UUID) -> str:
+    """Find a free slug by appending -2, -3, ... suffixes."""
+    candidate = base_slug
+    n = 2
+    while session.query(func.count(Post.id)).filter(
+        Post.site_id == site_id, Post.slug == candidate
+    ).scalar():
+        candidate = f"{base_slug}-{n}"
+        n += 1
+    return candidate
+
+
+def _make_content_hash(body_md: str) -> str:
+    return hashlib.sha256(body_md.encode()).hexdigest()
+
+
+def _create_revision(
+    session: Session,
+    post: Post,
+    *,
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Append a revision snapshot for the current state of the post."""
+    rev = PostRevision(
+        id=uuid.uuid4(),
+        post_id=post.id,
+        revision=post.revision_count,
+        title=post.title,
+        body_md=post.body_md,
+        frontmatter=post.frontmatter,
+        status=post.status,
+        actor_id=actor_id,
+    )
+    session.add(rev)
+
+
+def _resolve_site(session: Session, site_slug: str) -> Site:
+    exists = session.query(func.count(Site.id)).filter(Site.slug == site_slug).scalar()
+    if not exists:
+        raise SiteNotFoundError(site_slug)
+    return session.query(Site).filter(Site.slug == site_slug).one()
+
+
+def _resolve_post(session: Session, identifier: str, *, site_id: uuid.UUID | None = None) -> Post:
+    """Look up a post by UUID or slug, optionally scoped to a site."""
+    try:
+        post_id = uuid.UUID(identifier)
+        query = session.query(Post).filter(Post.id == post_id)
+    except ValueError:
+        query = session.query(Post).filter(Post.slug == identifier)
+
+    if site_id is not None:
+        query = query.filter(Post.site_id == site_id)
+
+    post = query.first()
+    if post is None:
+        raise PostNotFoundError(identifier)
+    return post
+
+
+def _post_to_dict(post: Post, site_slug: str, *, session: Session | None = None) -> dict[str, Any]:
+    """Build the JSON dict for a PostRead response."""
+    tags: list[str] = []
+    if session is not None:
+        tag_rows = (
+            session.query(Tag.slug)
+            .join(PostTag, PostTag.tag_id == Tag.id)
+            .filter(PostTag.post_id == post.id)
+            .all()
+        )
+        tags = [row[0] for row in tag_rows]
+    elif post.tag_links:
+        tags = [pt.tag.slug for pt in post.tag_links if pt.tag]
+
+    return {
+        "id": str(post.id),
+        "site_id": str(post.site_id),
+        "slug": post.slug,
+        "title": post.title,
+        "body_md": post.body_md,
+        "excerpt": post.excerpt,
+        "status": post.status,
+        "frontmatter": post.frontmatter or {},
+        "tags": tags,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+        "created_at": post.created_at,
+        "updated_at": post.updated_at,
+        "published_at": post.published_at,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Create
+# ---------------------------------------------------------------------------
+
+
+def create_post(
+    session: Session,
+    site_slug: str,
+    *,
+    body_md: str,
+    title: str | None = None,
+    slug: str | None = None,
+    tags: list[str] | None = None,
+    excerpt: str | None = None,
+    frontmatter: dict[str, Any] | None = None,
+) -> Post:
+    """Create a new post in draft status.
+
+    ``status`` is **never** read from user input — the post is always draft.
+    """
+    if not body_md or not body_md.strip():
+        raise ContentRequiredError("Document body required — body_md is the only required field.")
+
+    site = _resolve_site(session, site_slug)
+
+    # Derive title from first H1 if not supplied
+    if title is None or not title.strip():
+        derived = _derive_title(body_md)
+        if derived is None:
+            raise TitleRequiredError()
+        title = derived
+
+    # Derive slug from title if not supplied
+    if slug is None or not slug.strip():
+        slug = _slugify(title)
+
+    # Validate slug format
+    if not _SLUG_RE.match(slug):
+        raise SlugInvalidError(slug, "must contain only lowercase letters, digits, and single hyphens")
+
+    # Check for slug collision
+    existing = session.query(Post).filter(
+        Post.site_id == site.id,
+        Post.slug == slug,
+    ).first()
+    if existing is not None:
+        suggested = _slug_conflict_slug(slug, session, site.id)
+        raise SlugConflictError(slug, suggested, site=site_slug)
+
+    post = Post(
+        id=uuid.uuid4(),
+        site_id=site.id,
+        slug=slug,
+        title=title,
+        body_md=body_md,
+        excerpt=excerpt,
+        status="draft",
+        frontmatter=frontmatter or {},
+        content_hash=_make_content_hash(body_md),
+        revision_count=0,
+    )
+    session.add(post)
+    session.flush()
+
+    # Create initial revision
+    _create_revision(session, post)
+    post.revision_count = 1
+    session.flush()
+
+    # Handle tags
+    if tags:
+        _sync_tags(session, post, tags)
+
+    session.commit()
+    return post
+
+
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
+
+
+def get_post(session: Session, identifier: str, *, site_slug: str | None = None) -> Post:
+    """Read a post by id or slug."""
+    site_id = None
+    if site_slug:
+        site = _resolve_site(session, site_slug)
+        site_id = site.id
+    return _resolve_post(session, identifier, site_id=site_id)
+
+
+def list_posts(
+    session: Session,
+    site_slug: str,
+    *,
+    status: str | None = None,
+    limit: int = DEFAULT_LIMIT,
+    cursor: str | None = None,
+) -> tuple[list[Post], str | None]:
+    """List posts for a site with cursor pagination.
+
+    Returns (items, next_cursor).
+    """
+    if limit < 1 or limit > MAX_LIMIT:
+        limit = max(1, min(limit, MAX_LIMIT))
+
+    site = _resolve_site(session, site_slug)
+
+    query = session.query(Post).filter(
+        Post.site_id == site.id,
+        Post.deleted_at.is_(None),
+    )
+
+    if status:
+        query = query.filter(Post.status == status)
+
+    # Cursor pagination: cursor encodes (sort_key, id) where sort_key is
+    # published_at ISO format (or empty for nulls) and id is the post UUID.
+    if cursor:
+        try:
+            parts = cursor.split("|", 1)
+            sort_key_str, cursor_id_str = parts[0], parts[1]
+            cursor_id = uuid.UUID(cursor_id_str)
+            sort_key = datetime.fromisoformat(sort_key_str) if sort_key_str else None
+        except (ValueError, IndexError) as exc:
+            raise InvalidCursorError(f"Invalid cursor format: {cursor!r}") from exc
+
+        if sort_key is None:
+            # Current position is in the NULL published_at group
+            query = query.filter(
+                or_(
+                    Post.published_at.isnot(None),
+                    (Post.published_at.is_(None)) & (Post.id < cursor_id),
+                )
+            )
+        else:
+            query = query.filter(
+                or_(
+                    Post.published_at.is_(None),
+                    Post.published_at < sort_key,
+                    (Post.published_at == sort_key) & (Post.id < cursor_id),
+                )
+            )
+
+    query = query.order_by(Post.published_at.desc().nullslast(), Post.id.desc())
+    items = query.limit(limit + 1).all()
+
+    next_cursor = None
+    if len(items) > limit:
+        last = items[-2]
+        next_cursor = f"{last.published_at.isoformat() if last.published_at else ''}|{last.id}"
+        items = items[:limit]
+
+    return items, next_cursor
+
+
+# ---------------------------------------------------------------------------
+# Update
+# ---------------------------------------------------------------------------
+
+
+def update_post(
+    session: Session,
+    post_id: str,
+    *,
+    title: str | None = None,
+    body_md: str | None = None,
+    slug: str | None = None,
+    tags: list[str] | None = None,
+    excerpt: str | None = None,
+    frontmatter: dict[str, Any] | None = None,
+) -> Post:
+    """Partially update a post.  Creates a revision snapshot."""
+    post = _resolve_post(session, post_id)
+
+    if post.status == "trashed":
+        raise InvalidTransitionError(
+            "update", "trashed",
+            hint="Restore the post first (not yet supported), or create a new one.",
+        )
+
+    changed = False
+
+    if body_md is not None:
+        if not body_md.strip():
+            raise ContentRequiredError("Document body required — body_md is the only required field.")
+        post.body_md = body_md
+        post.content_hash = _make_content_hash(body_md)
+        changed = True
+
+    if title is not None:
+        post.title = title
+        changed = True
+
+    if slug is not None and slug != post.slug:
+        if not _SLUG_RE.match(slug):
+            raise SlugInvalidError(slug, "must contain only lowercase letters, digits, and single hyphens")
+        existing = session.query(Post).filter(
+            Post.site_id == post.site_id,
+            Post.slug == slug,
+            Post.id != post.id,
+        ).first()
+        if existing is not None:
+            suggested = _slug_conflict_slug(slug, session, post.site_id)
+            raise SlugConflictError(slug, suggested)
+        post.slug = slug
+        changed = True
+
+    if excerpt is not None:
+        post.excerpt = excerpt
+        changed = True
+
+    if frontmatter is not None:
+        post.frontmatter = frontmatter
+        changed = True
+
+    if tags is not None:
+        _sync_tags(session, post, tags)
+        changed = True
+
+    if changed:
+        post.revision_count += 1
+        _create_revision(session, post)
+        session.flush()
+        session.commit()
+
+    return post
+
+
+# ---------------------------------------------------------------------------
+# Publish
+# ---------------------------------------------------------------------------
+
+
+def publish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
+    """Publish a draft post.  Idempotent — publishing twice is a no-op."""
+    post = _resolve_post(session, post_id)
+    warnings: list[str] = []
+
+    if post.status == "published":
+        warnings.append(f"Post '{post.slug}' is already published; no change made.")
+        return post, warnings
+
+    if post.status not in ("draft", "pending_review"):
+        raise InvalidTransitionError(
+            "publish", post.status,
+            allowed_from=["draft", "pending_review"],
+        )
+
+    post.status = "published"
+    post.published_at = datetime.now(UTC)
+    post.revision_count += 1
+    _create_revision(session, post)
+    session.flush()
+    session.commit()
+    return post, warnings
+
+
+# ---------------------------------------------------------------------------
+# Unpublish
+# ---------------------------------------------------------------------------
+
+
+def unpublish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
+    """Unpublish a published post (back to draft)."""
+    post = _resolve_post(session, post_id)
+    warnings: list[str] = []
+
+    if post.status != "published":
+        raise InvalidTransitionError(
+            "unpublish", post.status,
+            allowed_from=["published"],
+        )
+
+    post.status = "draft"
+    post.revision_count += 1
+    _create_revision(session, post)
+    session.flush()
+    session.commit()
+    return post, warnings
+
+
+# ---------------------------------------------------------------------------
+# Trash
+# ---------------------------------------------------------------------------
+
+
+def trash_post(session: Session, post_id: str) -> Post:
+    """Soft-delete a post (status=trashed, deleted_at=now)."""
+    post = _resolve_post(session, post_id)
+
+    if post.status == "trashed":
+        return post  # already trashed
+
+    post.status = "trashed"
+    post.deleted_at = datetime.now(UTC)
+    post.revision_count += 1
+    _create_revision(session, post)
+    session.flush()
+    session.commit()
+    return post
+
+
+# ---------------------------------------------------------------------------
+# Tags helper
+# ---------------------------------------------------------------------------
+
+
+def _sync_tags(session: Session, post: Post, tag_slugs: list[str]) -> None:
+    """Replace the post's tags with the given list of slug strings."""
+    # Remove existing
+    session.query(PostTag).filter(PostTag.post_id == post.id).delete(synchronize_session=False)
+
+    for slug in tag_slugs[:20]:
+        slug = slug.lower().strip()
+        if not slug:
+            continue
+        tag = session.query(Tag).filter(Tag.slug == slug).first()
+        if tag is None:
+            tag = Tag(id=uuid.uuid4(), slug=slug, name=slug.replace("-", " ").title())
+            session.add(tag)
+            session.flush()
+        session.add(PostTag(post_id=post.id, tag_id=tag.id))
