@@ -1,0 +1,231 @@
+{
+  "$schema": "https://design-tokens.org/schema.json",
+  "$name": "Nocturne",
+  "$description": "Dark-first design system for a sleek modern chat app. Source of truth for all UI agents.",
+  "$version": "1.0.0",
+  "meta": {
+    "mode": "dark-primary",
+    "personality": ["sleek", "calm", "premium", "fast", "tactile"],
+    "baseUnit": 4,
+    "notes": "Never use pure black (#000) or pure white (#FFF) for large surfaces/text. Elevation = lighter surface + subtle top inner highlight."
+  },
+
+  "color": {
+    "neutral": {
+      "0":    { "value": "#FFFFFF", "desc": "Pure white - icons on brand fills only" },
+      "50":   { "value": "#F4F6FA" },
+      "100":  { "value": "#E6E9F2" },
+      "200":  { "value": "#CDD3E0" },
+      "300":  { "value": "#A8AFC0" },
+      "400":  { "value": "#7E8798" },
+      "500":  { "value": "#5C6474" },
+      "600":  { "value": "#414856" },
+      "700":  { "value": "#2B303C" },
+      "800":  { "value": "#1B1E2A" },
+      "850":  { "value": "#14161F" },
+      "900":  { "value": "#0E1017" },
+      "950":  { "value": "#08090D" },
+      "1000": { "value": "#05060A" }
+    },
+    "brand": {
+      "50":   { "value": "#F0EDFF" },
+      "100":  { "value": "#E0DAFF" },
+      "200":  { "value": "#C4B8FF" },
+      "300":  { "value": "#A794FF" },
+      "400":  { "value": "#8F75FF", "desc": "hover / light accents" },
+      "500":  { "value": "#7C5CFF", "desc": "PRIMARY - buttons, links, focus, active nav" },
+      "600":  { "value": "#6A48F0", "desc": "pressed" },
+      "700":  { "value": "#5535CE" },
+      "800":  { "value": "#3D2596" },
+      "900":  { "value": "#241363" }
+    },
+    "accent": {
+      "cyan":    { "value": "#22D3EE", "desc": "secondary accent - own-message highlights, data viz, gradient end" },
+      "magenta": { "value": "#F472B6", "desc": "tertiary accent - reactions, mentions, fun moments" },
+      "lime":    { "value": "#A3E635", "desc": "rare highlight - voice notes waveform active" }
+    },
+    "semantic": {
+      "success": { "value": "#34D399" },
+      "warning": { "value": "#FBBF24" },
+      "danger":  { "value": "#FB7185" },
+      "info":    { "value": "#38BDF8" }
+    },
+    "surface": {
+      "sunken":   { "value": "{color.neutral.1000}", "desc": "app chrome behind panels, scroll wells" },
+      "base":     { "value": "{color.neutral.950}",  "desc": "APP BACKGROUND - default page canvas" },
+      "raised1":  { "value": "{color.neutral.900}",  "desc": "cards, sidebar, header, composer" },
+      "raised2":  { "value": "{color.neutral.850}",  "desc": "bubble-in, hovered card, popover" },
+      "raised3":  { "value": "{color.neutral.800}",  "desc": "dropdowns, modals, hovered list row" },
+      "raised4":  { "value": "{color.neutral.700}",  "desc": "tooltips, dragged item, pressed row" },
+      "glass":    { "value": "rgba(20, 22, 31, 0.72)", "desc": "with backdrop-blur(20px) saturate(140%)" },
+      "overlay":  { "value": "rgba(5, 6, 10, 0.72)", "desc": "modal scrim" }
+    },
+    "text": {
+      "primary":   { "value": "{color.neutral.50}",  "contrastOnBase": "17.1:1", "desc": "message text, headings" },
+      "secondary": { "value": "{color.neutral.300}", "contrastOnBase": "8.4:1",  "desc": "timestamps, previews, labels" },
+      "tertiary":  { "value": "{color.neutral.400}", "contrastOnBase": "4.9:1",  "desc": "meta, placeholders, icons idle" },
+      "disabled":  { "value": "{color.neutral.500}", "desc": "non-interactive only, exempt from contrast" },
+      "onBrand":   { "value": "#0B0714", "desc": "text/icons on brand-500 and gradient fills" },
+      "brand":     { "value": "{color.brand.300}", "desc": "links, mention, unread count" }
+    },
+    "border": {
+      "subtle": { "value": "rgba(255, 255, 255, 0.06)", "desc": "default hairline divider (1px @ any dpr)" },
+      "default":{ "value": "rgba(255, 255, 255, 0.10)", "desc": "input rest, card edge" },
+      "strong": { "value": "rgba(255, 255, 255, 0.16)", "desc": "hover, focused field, resize handle" },
+      "brand":  { "value": "rgba(124, 92, 255, 0.55)" },
+      "highlight": { "value": "rgba(255, 255, 255, 0.08)", "desc": "1px inner top edge that fakes light falloff on elevated surfaces" }
+    },
+    "presence": {
+      "online":  { "value": "#34D399" },
+      "away":    { "value": "#FBBF24" },
+      "busy":    { "value": "#FB7185" },
+      "offline": { "value": "{color.neutral.500}" }
+    }
+  },
+
+  "gradient": {
+    "aurora":    { "value": "linear-gradient(135deg, #7C5CFF 0%, #22D3EE 100%)", "desc": "hero, avatars fallback, onboarding art" },
+    "brand":     { "value": "linear-gradient(135deg, #8F75FF 0%, #6A48F0 100%)", "desc": "primary button, own bubble fill" },
+    "brandDeep": { "value": "linear-gradient(160deg, #6A48F0 0%, #3D2596 100%)", "desc": "pressed/large surfaces" },
+    "ownBubble": { "value": "linear-gradient(160deg, #7C5CFF 0%, #6244E8 100%)", "desc": "outgoing message bubble" },
+    "text":      { "value": "linear-gradient(92deg, #FFFFFF 0%, #A8AFC0 100%)", "desc": "big display headings only" },
+    "textBrand": { "value": "linear-gradient(92deg, #A794FF 0%, #22D3EE 100%)", "desc": "wordmark, upgrade CTA" },
+    "glowTop":   { "value": "radial-gradient(120% 80% at 50% -20%, rgba(124,92,255,0.28) 0%, rgba(124,92,255,0) 60%)", "desc": "ambient light behind header / modal top" },
+    "glowCorner":{ "value": "radial-gradient(60% 60% at 100% 0%, rgba(34,211,238,0.16) 0%, rgba(34,211,238,0) 70%)" },
+    "mesh":      { "value": "radial-gradient(50% 50% at 20% 20%, rgba(124,92,255,0.20) 0%, transparent 70%), radial-gradient(50% 50% at 80% 30%, rgba(34,211,238,0.14) 0%, transparent 70%), radial-gradient(60% 60% at 50% 90%, rgba(244,114,182,0.12) 0%, transparent 70%)", "desc": "empty states, auth screens" },
+    "shimmer":   { "value": "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0) 100%)", "desc": "skeleton sweep, 1.4s infinite" },
+    "scrim":     { "value": "linear-gradient(180deg, rgba(8,9,13,0) 0%, rgba(8,9,13,0.9) 70%, #08090D 100%)", "desc": "fade under sticky header/footer" }
+  },
+
+  "typography": {
+    "family": {
+      "sans":  { "value": "Inter, 'Inter var', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", "desc": "ALL UI + body. Variable weight 100-900, use tabular numbers for timestamps" },
+      "display":{ "value": "'Inter Tight', Inter, sans-serif", "desc": "headlines >=24px, tighter tracking" },
+      "wordmark": { "value": "'Space Grotesk', Inter, sans-serif", "desc": "logo/wordmark only" },
+      "mono":  { "value": "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace", "desc": "code blocks, message IDs, invite codes" }
+    },
+    "weight": { "regular": 400, "medium": 500, "semibold": 600, "bold": 700 },
+    "tracking": { "tight": "-0.02em", "snug": "-0.011em", "normal": "0", "wide": "0.01em", "caps": "0.06em" },
+    "scale": {
+      "micro": { "size": "11px", "lineHeight": "16px", "weight": 500, "tracking": "0.06em", "usage": "caps labels, presence meta, timestamps compact" },
+      "caption": { "size": "12px", "lineHeight": "16px", "weight": 500, "usage": "timestamps, read receipts, secondary meta" },
+      "bodySm": { "size": "13px", "lineHeight": "20px", "weight": 400, "usage": "sidebar chat preview, dense settings" },
+      "body": { "size": "15px", "lineHeight": "24px", "weight": 400, "usage": "DEFAULT message + UI body text" },
+      "bodyStrong": { "size": "15px", "lineHeight": "24px", "weight": 600, "usage": "sender name, list row title" },
+      "titleMd": { "size": "17px", "lineHeight": "24px", "weight": 600, "usage": "chat header name, modal title" },
+      "titleLg": { "size": "20px", "lineHeight": "28px", "weight": 600, "tracking": "-0.011em", "usage": "panel titles, empty state headline" },
+      "displaySm": { "size": "24px", "lineHeight": "32px", "weight": 600, "tracking": "-0.02em", "usage": "onboarding headline" },
+      "displayMd": { "size": "30px", "lineHeight": "38px", "weight": 600, "tracking": "-0.02em" },
+      "displayLg": { "size": "38px", "lineHeight": "46px", "weight": 600, "tracking": "-0.02em" },
+      "displayXl": { "size": "48px", "lineHeight": "56px", "weight": 600, "tracking": "-0.02em", "usage": "marketing hero only" }
+    },
+    "rules": [
+      "Max measure: 720px for message column, 64ch for marketing copy.",
+      "Message body 15px/24px; never go below 13px for interactive text.",
+      "Use font-variant-numeric: tabular-nums for timestamps, counters and read receipts.",
+      "2 weights per screen is the norm (400 + 600). Reserve 700 for wordmark."
+    ]
+  },
+
+  "space": {
+    "0": "0px", "px": "1px", "0.5": "2px", "1": "4px", "1.5": "6px", "2": "8px", "3": "12px",
+    "4": "16px", "5": "20px", "6": "24px", "7": "28px", "8": "32px", "10": "40px", "12": "48px",
+    "16": "64px", "20": "80px", "24": "96px",
+    "layout": { "gutter": "16px", "panelPadding": "20px", "sectionGap": "24px", "bubbleGap": "8px", "bubbleGapGrouped": "2px" }
+  },
+
+  "radius": {
+    "xs": "6px", "sm": "10px", "md": "14px", "lg": "18px", "xl": "24px", "2xl": "32px", "full": "9999px",
+    "bubble": "18px", "bubbleTail": "6px",
+    "usage": "Bubbles: 18px, with the corner nearest the sender collapsed to 6px. Inputs/buttons: 10-14px. Cards/panels: 18-24px. Avatars/pills: full."
+  },
+
+  "shadow": {
+    "none": "none",
+    "xs": "0 1px 2px rgba(0,0,0,0.4)",
+    "sm": "0 2px 8px rgba(0,0,0,0.36)",
+    "md": "0 8px 24px rgba(0,0,0,0.44)",
+    "lg": "0 16px 40px rgba(0,0,0,0.52)",
+    "xl": "0 32px 72px rgba(0,0,0,0.60)",
+    "glowBrand": "0 8px 28px rgba(124,92,255,0.36)",
+    "glowCyan": "0 8px 28px rgba(34,211,238,0.28)",
+    "ring": "inset 0 0 0 1px rgba(255,255,255,0.08)",
+    "innerTop": "inset 0 1px 0 rgba(255,255,255,0.08)",
+    "focus": "0 0 0 2px #08090D, 0 0 0 4px rgba(124,92,255,0.75)",
+    "recipe": "Compose elevation as: shadow.md + shadow.innerTop (+ subtle 1px border). Bottom-anchored popovers use a downward shadow; tooltips use innerTop + shadow.lg."
+  },
+
+  "blur": {
+    "sm": "blur(8px)", "md": "blur(16px)", "lg": "blur(24px) saturate(140%)", "xl": "blur(48px) saturate(160%)",
+    "usage": "Header + composer: blur(24px) over surface.glass. Modal scrim: blur(2px) + overlay. Gradient glow blobs: blur(80px) opacity 0.5."
+  },
+
+  "border": { "hairline": "1px solid", "default": "1px solid", "emphasis": "2px solid", "note": "Always 1px (never 2px) for dividers in dark UI; 2px only for tab underlines and focus." },
+
+  "motion": {
+    "duration": { "instant": "80ms", "fast": "140ms", "base": "200ms", "slow": "320ms", "slower": "480ms" },
+    "ease": { "standard": "cubic-bezier(0.2, 0, 0, 1)", "enter": "cubic-bezier(0, 0, 0.2, 1)", "exit": "cubic-bezier(0.4, 0, 1, 1)", "spring": "cubic-bezier(0.34, 1.56, 0.64, 1)", "linear": "linear" },
+    "recipes": {
+      "messageIn": "opacity 0->1, translateY(6px)->0, 200ms ease.enter",
+      "bubblePop": "scale(0.96)->1 + opacity, 140ms spring (reactions, send)",
+      "sidebarSlide": "translateX(-12px)->0 + fade, 240ms ease.standard",
+      "typingDots": "opacity+y bounce 1.1s linear infinite, 160ms stagger",
+      "skeleton": "gradient.shimmer sweep 1.4s linear infinite",
+      "press": "scale(0.97), 80ms",
+      "hoverLift": "translateY(-1px) + shadow md->lg, 140ms",
+      "reducedMotion": "Honor prefers-reduced-motion: keep opacity fades, drop transforms to 0."
+    }
+  },
+
+  "component": {
+    "appShell": { "bg": "{color.surface.base}", "sidebarWidth": "320px", "sidebarBg": "{color.surface.raised1}", "headerHeight": "64px", "composerHeight": "56px", "messageColumnMax": "720px", "railWidth": "72px" },
+    "button": {
+      "height": { "sm": "32px", "md": "38px", "lg": "44px" },
+      "paddingX": { "sm": "12px", "md": "16px", "lg": "20px" },
+      "radius": "{radius.sm}",
+      "primary": { "bg": "{gradient.brand}", "text": "{color.text.onBrand}", "shadow": "{shadow.glowBrand}", "hover": "brightness(1.08) + translateY(-1px)", "active": "brightness(0.95) + scale(0.98)" },
+      "secondary": { "bg": "{color.surface.raised3}", "text": "{color.text.primary}", "border": "{color.border.default}", "hover": "{color.surface.raised4}" },
+      "ghost": { "bg": "transparent", "text": "{color.text.secondary}", "hover": "{color.surface.raised2}" },
+      "danger": { "bg": "{color.semantic.danger}", "text": "#2A0710" },
+      "iconOnly": "size 32/38px, radius full, ghost by default"
+    },
+    "messageBubble": {
+      "incoming": { "bg": "{color.surface.raised2}", "text": "{color.text.primary}", "border": "{color.border.subtle}" },
+      "outgoing": { "bg": "{gradient.ownBubble}", "text": "{color.text.primary}", "shadow": "{shadow.sm}", "glow": "optional shadow.glowBrand" },
+      "maxWidth": "min(72ch, 68%)",
+      "padding": "10px 14px",
+      "radius": "18px, sender-side corner 6px",
+      "meta": "caption/12px, text.tertiary, aligned to bubble bottom edge, 6px gap",
+      "grouping": "Consecutive messages from same sender within 5 min: 2px gap, only last bubble keeps the tail corner"
+    },
+    "composer": {
+      "bg": "{color.surface.glass} + backdrop-filter blur(24px)",
+      "field": { "bg": "{color.surface.raised2}", "border": "{color.border.default}", "radius": "{radius.md}", "placeholder": "{color.text.tertiary}", "minHeight": "44px", "maxHeight": "200px (then scroll)", "focus": "border.brand + shadow.focus" },
+      "actions": ["attach (ghost)", "emoji (ghost)", "send (primary, gradient, glow, 36px circle, appears on input; Enter sends, Shift+Enter newline)"]
+    },
+    "avatar": { "sizes": { "xs": "20px", "sm": "28px", "md": "36px", "lg": "48px", "xl": "96px" }, "radius": "full", "fallback": "{gradient.aurora} + initials 600 white", "ring": "2px solid {color.surface.base} for stacked groups", "presenceDot": "10px (md), 2px base ring, bottom-right" },
+    "chatListItem": { "height": "68px", "padding": "10px 12px", "radius": "{radius.md}", "rest": "transparent", "hover": "{color.surface.raised2}", "active": "{color.surface.raised3} + 2px left brand bar", "unread": "title 600, preview text.primary, badge gradient.aurora pill 20px min, caption/600 onBrand", "muted": "dot instead of badge, text.secondary" },
+    "input": { "height": { "md": "38px", "lg": "44px" }, "bg": "{color.surface.raised2}", "border": "{color.border.default}", "radius": "{radius.sm}", "placeholder": "{color.text.tertiary}", "focus": "border brand + shadow.focus", "error": "border danger + helper text danger caption", "label": "caption/500 text.secondary, 6px gap" },
+    "modal": { "bg": "{color.surface.raised3}", "radius": "{radius.xl}", "shadow": "{shadow.xl}", "border": "{color.border.default}", "scrim": "{color.surface.overlay} + blur(2px)", "padding": "24px", "widths": { "sm": "400px", "md": "560px", "lg": "760px" }, "anim": "fade + scale(0.98)->1 200ms ease.enter" },
+    "tooltip": { "bg": "{color.surface.raised4}", "text": "{color.text.primary}", "size": "caption", "padding": "6px 10px", "radius": "{radius.xs}", "shadow": "{shadow.md}", "delay": "400ms in, 0ms out" },
+    "toast": { "bg": "{color.surface.raised3}", "border": "{color.border.default}", "radius": "{radius.md}", "accentBar": "3px left, semantic color", "shadow": "{shadow.lg}", "duration": "4000ms", "anim": "slide up 12px + fade 240ms" },
+    "badge": { "unread": "{gradient.aurora} pill, onBrand caption/600", "neutral": "{color.surface.raised4} text.secondary", "dot": "8px semantic" },
+    "reaction": { "bg": "{color.surface.raised2}", "border": "transparent", "radius": "{radius.full}", "size": "caption", "padding": "3px 10px", "active": "bg rgba(124,92,255,0.16), border brand, anim bubblePop" },
+    "typingIndicator": { "bubble": "{color.surface.raised2} radius.bubble", "dots": "6px, text.tertiary, bounce stagger 160ms" },
+    "readReceipt": { "sent": "single check, text.tertiary", "delivered": "double check, text.tertiary", "read": "double check, accent.cyan", "size": "16px, 1.5px stroke" },
+    "scrollbar": { "width": "10px", "thumb": "rgba(255,255,255,0.14) radius full, 2px transparent track padding", "hover": "rgba(255,255,255,0.22)", "overlay": "auto-hide after 1s idle" },
+    "skeleton": { "bg": "{color.surface.raised2}", "sheen": "{gradient.shimmer}", "radius": "inherit shape", "duration": "1.4s infinite" },
+    "emptyState": { "art": "{gradient.mesh} glow blob 320px blur(80px)", "title": "titleLg", "body": "bodySm text.secondary max 42ch", "cta": "primary button" }
+  },
+
+  "iconography": { "stroke": "1.5px", "sizes": ["16px", "20px (default)", "24px"], "caps": "round", "joins": "round", "style": "outline, geometric, optically aligned to 20px grid", "recommended": "Lucide (MIT) — stroke 1.5, 20px default" },
+
+  "accessibility": {
+    "minContrast": { "bodyText": "4.5:1", "largeText": "3:1", "uiBorders": "3:1 for interactive affordances" },
+    "focus": "Always visible: shadow.focus (2px offset ring, brand 75%). Never remove outline without replacement.",
+    "targets": "Min 32px hit area, 44px for primary mobile actions. Increase hit area with padding, not visible size.",
+    "colorAlone": "Never encode state by color alone — pair presence/unread/error with icon, weight or text.",
+    "reducedMotion": "All transform animations collapse; opacity fades retained.",
+    "dontDo": ["Pure #000 backgrounds with pure #FFF text", "Grey text below #6F7789 for body copy", "Glow shadows on >2 elements per view", "More than one gradient fill competing in a single message row"]
+  }
+}

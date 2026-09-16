@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nocturne — Design System Preview</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet">
+<style>
+/* ---- Nocturne tokens (mirror of nocturne.css, inlined so this file stands alone) ---- */
+:root{
+  color-scheme:dark;
+  --n-0:#FFFFFF;--n-50:#F4F6FA;--n-100:#E6E9F2;--n-200:#CDD3E0;--n-300:#A8AFC0;--n-400:#7E8798;
+  --n-500:#5C6474;--n-600:#414856;--n-700:#2B303C;--n-800:#1B1E2A;--n-850:#14161F;--n-900:#0E1017;--n-950:#08090D;--n-1000:#05060A;
+  --brand-300:#A794FF;--brand-400:#8F75FF;--brand-500:#7C5CFF;--brand-600:#6A48F0;--brand-800:#3D2596;
+  --accent-cyan:#22D3EE;--accent-magenta:#F472B6;--accent-lime:#A3E635;
+  --success:#34D399;--warning:#FBBF24;--danger:#FB7185;--info:#38BDF8;
+  --bg-sunken:var(--n-1000);--bg-base:var(--n-950);--bg-raised-1:var(--n-900);--bg-raised-2:var(--n-850);
+  --bg-raised-3:var(--n-800);--bg-raised-4:var(--n-700);--bg-glass:rgba(20,22,31,.72);--bg-overlay:rgba(5,6,10,.72);
+  --text-primary:var(--n-50);--text-secondary:var(--n-300);--text-tertiary:var(--n-400);--text-disabled:var(--n-500);
+  --text-brand:var(--brand-300);--text-on-brand:#0B0714;
+  --border-subtle:rgba(255,255,255,.06);--border-default:rgba(255,255,255,.10);--border-strong:rgba(255,255,255,.16);--border-brand:rgba(124,92,255,.55);
+  --gradient-aurora:linear-gradient(135deg,#7C5CFF 0%,#22D3EE 100%);
+  --gradient-brand:linear-gradient(135deg,#8F75FF 0%,#6A48F0 100%);
+  --gradient-brand-deep:linear-gradient(160deg,#6A48F0 0%,#3D2596 100%);
+  --gradient-own-bubble:linear-gradient(160deg,#7C5CFF 0%,#6244E8 100%);
+  --gradient-text:linear-gradient(92deg,#FFFFFF 0%,#A8AFC0 100%);
+  --gradient-text-brand:linear-gradient(92deg,#A794FF 0%,#22D3EE 100%);
+  --gradient-glow-top:radial-gradient(120% 80% at 50% -20%,rgba(124,92,255,.28) 0%,rgba(124,92,255,0) 60%);
+  --gradient-glow-corner:radial-gradient(60% 60% at 100% 0%,rgba(34,211,238,.16) 0%,rgba(34,211,238,0) 70%);
+  --gradient-mesh:radial-gradient(50% 50% at 20% 20%,rgba(124,92,255,.20) 0%,transparent 70%),radial-gradient(50% 50% at 80% 30%,rgba(34,211,238,.14) 0%,transparent 70%),radial-gradient(60% 60% at 50% 90%,rgba(244,114,182,.12) 0%,transparent 70%);
+  --gradient-shimmer:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.06) 50%,rgba(255,255,255,0) 100%);
+  --gradient-scrim:linear-gradient(180deg,rgba(8,9,13,0) 0%,rgba(8,9,13,.9) 70%,#08090D 100%);
+  --font-sans:Inter,'Inter var',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-display:'Inter Tight',Inter,sans-serif;--font-wordmark:'Space Grotesk',Inter,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:20px;--s-6:24px;--s-8:32px;--s-10:40px;--s-12:48px;--s-16:64px;
+  --r-xs:6px;--r-sm:10px;--r-md:14px;--r-lg:18px;--r-xl:24px;--r-2xl:32px;--r-full:9999px;
+  --shadow-sm:0 2px 8px rgba(0,0,0,.36);--shadow-md:0 8px 24px rgba(0,0,0,.44);--shadow-lg:0 16px 40px rgba(0,0,0,.52);--shadow-xl:0 32px 72px rgba(0,0,0,.60);
+  --shadow-glow-brand:0 8px 28px rgba(124,92,255,.36);--shadow-inner-top:inset 0 1px 0 rgba(255,255,255,.08);
+  --shadow-focus:0 0 0 2px var(--bg-base),0 0 0 4px rgba(124,92,255,.75);
+  --blur-lg:blur(24px) saturate(140%);
+  --ease-standard:cubic-bezier(.2,0,0,1);--ease-enter:cubic-bezier(0,0,.2,1);--ease-spring:cubic-bezier(.34,1.56,.64,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg-base);color:var(--text-primary);font:15px/24px var(--font-sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:var(--s-12) var(--s-6) var(--s-16)}
+h1,h2,h3{font-family:var(--font-display);margin:0}
+h1{font-size:38px;line-height:46px;letter-spacing:-.02em;font-weight:600}
+h2{font-size:24px;line-height:32px;letter-spacing:-.02em;font-weight:600;margin:var(--s-16) 0 var(--s-6)}
+h3{font-size:17px;line-height:24px;font-weight:600;margin:0 0 var(--s-3)}
+p{color:var(--text-secondary);margin:var(--s-3) 0 0;font-size:13px;line-height:20px}
+.mono{font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary)}
+.wordmark{font-family:var(--font-wordmark);font-weight:600;font-size:20px;background:var(--gradient-text-brand);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-.01em}
+.eyebrow{font-size:11px;line-height:16px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary)}
+.hero{position:relative;overflow:hidden;border:1px solid var(--border-subtle);border-radius:var(--r-2xl);padding:var(--s-10);background:var(--bg-raised-1);box-shadow:var(--shadow-md),var(--shadow-inner-top)}
+.hero::before{content:"";position:absolute;inset:0;background:var(--gradient-glow-top);pointer-events:none}
+.hero::after{content:"";position:absolute;inset:0;background:var(--gradient-glow-corner);pointer-events:none}
+.hero>*{position:relative;z-index:1}
+.card{background:var(--bg-raised-2);border:1px solid var(--border-subtle);border-radius:var(--r-lg);box-shadow:var(--shadow-md),var(--shadow-inner-top);padding:var(--s-5)}
+.grid{display:grid;gap:var(--s-4)}
+.g-auto{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.g-2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.row{display:flex;gap:var(--s-3);align-items:center;flex-wrap:wrap}
+.sw{border-radius:var(--r-md);border:1px solid var(--border-subtle);overflow:hidden;background:var(--bg-raised-1)}
+.sw__chip{height:56px}
+.sw__meta{padding:10px 12px}
+.sw__name{font-size:12px;font-weight:600;font-family:var(--font-mono)}
+.sw__hex{font-size:11px;font-weight:500;letter-spacing:.06em;color:var(--text-tertiary);font-family:var(--font-mono)}
+.sw__note{font-size:11px;line-height:16px;color:var(--text-tertiary);margin-top:2px}
+/* app mock */
+.app{display:flex;height:660px;border:1px solid var(--border-subtle);border-radius:var(--r-2xl);overflow:hidden;background:var(--bg-base);box-shadow:var(--shadow-xl),var(--shadow-inner-top)}
+.rail{width:72px;background:var(--bg-sunken);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;align-items:center;gap:var(--s-3);padding:var(--s-4) 0}
+.rail__item{width:40px;height:40px;border-radius:var(--r-md);display:grid;place-items:center;color:var(--text-tertiary);background:transparent;font-size:15px;transition:all .14s var(--ease-standard)}
+.rail__item:hover{background:var(--bg-raised-2);color:var(--text-primary)}
+.rail__item.is-active{background:var(--gradient-brand);color:var(--text-on-brand);box-shadow:var(--shadow-glow-brand)}
+.sidebar{width:320px;background:var(--bg-raised-1);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column}
+.sidebar__head{padding:var(--s-5) var(--s-5) var(--s-3)}
+.search{display:flex;align-items:center;gap:var(--s-2);height:38px;padding:0 var(--s-3);background:var(--bg-raised-2);border:1px solid var(--border-default);border-radius:var(--r-sm);color:var(--text-tertiary);font-size:13px;margin-top:var(--s-3)}
+.list{overflow:auto;padding:0 var(--s-2) var(--s-2)}
+.item{display:flex;gap:var(--s-3);align-items:center;height:68px;padding:10px 12px;border-radius:var(--r-md);position:relative;transition:background .14s var(--ease-standard)}
+.item:hover{background:var(--bg-raised-2)}
+.item.is-active{background:var(--bg-raised-3)}
+.item.is-active::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:2px;border-radius:2px;background:var(--gradient-brand)}
+.item__t{flex:1;min-width:0}
+.item__name{font-size:15px;font-weight:600;display:flex;justify-content:space-between;gap:var(--s-2)}
+.item__prev{font-size:13px;line-height:20px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item__time{font-size:12px;font-weight:500;color:var(--text-tertiary);font-variant-numeric:tabular-nums}
+.item.is-unread .item__name{font-weight:700}
+.item.is-unread .item__prev{color:var(--text-primary)}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.chat::before{content:"";position:absolute;inset:0;background:var(--gradient-glow-top);pointer-events:none}
+.header{height:64px;display:flex;align-items:center;gap:var(--s-3);padding:0 var(--s-5);background:var(--bg-glass);backdrop-filter:var(--blur-lg);-webkit-backdrop-filter:var(--blur-lg);border-bottom:1px solid var(--border-subtle);position:relative;z-index:2}
+.header .name{font-size:17px;font-weight:600}
+.header .status{font-size:12px;font-weight:500;color:var(--text-tertiary);display:flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:var(--r-full);background:var(--presence-online);display:inline-block}
+.thread{flex:1;overflow:auto;padding:var(--s-6) var(--s-6) var(--s-4);display:flex;flex-direction:column;gap:var(--s-2);position:relative;z-index:1}
+.thread::-webkit-scrollbar,.list::-webkit-scrollbar{width:10px}
+.thread::-webkit-scrollbar-thumb,.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:9999px;border:2px solid transparent;background-clip:content-box}
+.day{align-self:center;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary);background:var(--bg-raised-2);border:1px solid var(--border-subtle);padding:4px 10px;border-radius:var(--r-full);margin:var(--s-2) 0}
+.msg{display:flex;gap:var(--s-3);max-width:min(72ch,78%);animation:bubbleIn .2s var(--ease-enter) both}
+.msg--out{margin-left:auto;flex-direction:row-reverse}
+.msg__body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bub{padding:10px 14px;border-radius:18px 18px 18px 6px;background:var(--bg-raised-2);border:1px solid var(--border-subtle);font-size:15px;line-height:24px}
+.msg--out .bub{background:var(--gradient-own-bubble);border-color:transparent;border-radius:18px 18px 6px 18px;box-shadow:var(--shadow-sm),var(--shadow-inner-top)}
+.bub+.bub{margin-top:2px}
+.meta{font-size:12px;font-weight:500;color:var(--text-tertiary);font-variant-numeric:tabular-nums;align-self:flex-end;padding:0 4px}
+.meta--out{align-self:flex-start}
+.tick{color:var(--accent-cyan)}
+.avatar{width:36px;height:36px;border-radius:var(--r-full);background:var(--gradient-aurora);display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;flex:none;position:relative}
+.avatar--sm{width:28px;height:28px;font-size:11px}
+.avatar--d2{background:linear-gradient(135deg,#F472B6,#7C5CFF)}
+.avatar--d3{background:linear-gradient(135deg,#22D3EE,#34D399)}
+.avatar__dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:9999px;background:var(--presence-online);box-shadow:0 0 0 2px var(--bg-base)}
+.avatar__dot--away{background:var(--presence-away)}
+.react{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;padding:3px 10px;border-radius:var(--r-full);background:var(--bg-raised-2);border:1px solid var(--border-subtle);color:var(--text-secondary)}
+.react.is-on{background:rgba(124,92,255,.16);border-color:var(--border-brand);color:var(--text-primary)}
+.typing{display:inline-flex;gap:4px;align-items:center;padding:12px 14px}
+.typing i{width:6px;height:6px;border-radius:9999px;background:var(--text-tertiary);animation:type 1.1s linear infinite}
+.typing i:nth-child(2){animation-delay:.16s}.typing i:nth-child(3){animation-delay:.32s}
+.composer{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-3) var(--s-5);background:var(--bg-glass);backdrop-filter:var(--blur-lg);-webkit-backdrop-filter:var(--blur-lg);border-top:1px solid var(--border-subtle);position:relative;z-index:2}
+.field{flex:1;display:flex;align-items:center;height:44px;padding:0 var(--s-4);background:var(--bg-raised-2);border:1px solid var(--border-default);border-radius:var(--r-md);color:var(--text-tertiary);font-size:15px}
+.field.is-focus{border-color:var(--border-brand);box-shadow:var(--shadow-focus);color:var(--text-secondary)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 16px;font-size:13px;font-weight:600;color:var(--text-primary);background:var(--bg-raised-3);border:1px solid var(--border-default);border-radius:var(--r-sm);cursor:pointer;transition:all .14s var(--ease-standard);font-family:inherit}
+.btn:hover{background:var(--bg-raised-4);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+.btn:active{transform:scale(.97)}
+.btn--primary{background:var(--gradient-brand);border-color:transparent;color:var(--text-on-brand);box-shadow:var(--shadow-glow-brand),var(--shadow-inner-top)}
+.btn--primary:hover{filter:brightness(1.08)}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--text-secondary)}
+.btn--ghost:hover{background:var(--bg-raised-2);box-shadow:none}
+.btn--danger{background:var(--danger);border-color:transparent;color:#2A0710}
+.btn--icon{width:38px;padding:0;border-radius:var(--r-full)}
+.send{width:36px;height:36px;border-radius:var(--r-full);display:grid;place-items:center;background:var(--gradient-brand);color:var(--text-on-brand);box-shadow:var(--shadow-glow-brand),var(--shadow-inner-top);font-size:15px}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:var(--r-full);background:var(--gradient-aurora);color:var(--text-on-brand);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.tag{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:var(--r-full);font-size:12px;font-weight:500;background:var(--bg-raised-3);border:1px solid var(--border-default);color:var(--text-secondary)}
+.inp{height:38px;width:100%;padding:0 12px;background:var(--bg-raised-2);border:1px solid var(--border-default);border-radius:var(--r-sm);color:var(--text-primary);font:15px/24px var(--font-sans);outline:none}
+.inp::placeholder{color:var(--text-tertiary)}
+.inp:focus{border-color:var(--border-brand);box-shadow:var(--shadow-focus)}
+.lbl{display:block;font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:6px}
+.sk{border-radius:var(--r-sm);background:var(--bg-raised-2);position:relative;overflow:hidden}
+.sk::after{content:"";position:absolute;inset:0;background:var(--gradient-shimmer);animation:shimmer 1.4s linear infinite}
+.grad{height:92px;border-radius:var(--r-md);border:1px solid var(--border-subtle);display:flex;align-items:flex-end;padding:10px 12px;font-size:12px;font-weight:600;font-family:var(--font-mono);color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.type-row{display:flex;align-items:baseline;gap:var(--s-6);padding:12px 0;border-bottom:1px solid var(--border-subtle)}
+.type-row span:first-child{flex:none;width:130px}
+.scale{display:flex;align-items:flex-end;gap:var(--s-2);height:64px}
+.scale div{background:var(--gradient-brand);border-radius:4px 4px 0 0;width:26px}
+.elev{height:110px;border-radius:var(--r-lg);background:var(--bg-raised-2);border:1px solid var(--border-subtle);box-shadow:var(--shadow-md),var(--shadow-inner-top);display:grid;place-items:center;font-size:12px;font-family:var(--font-mono);color:var(--text-tertiary)}
+.empty{position:relative;overflow:hidden;border-radius:var(--r-xl);border:1px solid var(--border-subtle);background:var(--bg-raised-1);padding:var(--s-12) var(--s-6);text-align:center}
+.empty::before{content:"";position:absolute;left:50%;top:-80px;width:320px;height:320px;transform:translateX(-50%);background:var(--gradient-mesh);filter:blur(80px)}
+.empty>*{position:relative}
+@keyframes bubbleIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+@keyframes type{0%,60%,100%{opacity:.35;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+@media (max-width:900px){.sidebar{display:none}.app{height:auto}.thread{max-height:520px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="eyebrow">Design system · v1.0.0 · dark-first</div>
+        <h1 style="margin-top:8px">Nocturne</h1>
+        <p style="max-width:52ch;font-size:15px;line-height:24px">One loud accent over deep charcoal. Violet aurora light, glassy chrome, quiet motion — a sleek modern chat app that feels premium and disappears behind the conversation.</p>
+      </div>
+      <div style="text-align:right">
+        <div class="wordmark">Nocturne</div>
+        <div class="mono" style="margin-top:6px">Inter · Inter Tight · Space Grotesk · Mono</div>
+        <div class="mono">#7C5CFF · #22D3EE · #08090D</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:24px">
+      <button class="btn btn--primary">Send message</button>
+      <button class="btn">Secondary</button>
+      <button class="btn btn--ghost">Ghost</button>
+      <span class="tag">1.5px stroke</span>
+      <span class="tag">4px grid</span>
+      <span class="tag">4.9:1 min meta</span>
+    </div>
+  </div>
+
+  <h2>App in context</h2>
+  <div class="app">
+    <div class="rail">
+      <div class="rail__item is-active">✦</div>
+      <div class="rail__item">◍</div>
+      <div class="rail__item">◎</div>
+      <div class="rail__item" style="margin-top:auto">⚙</div>
+      <div class="avatar avatar--sm" style="margin-bottom:4px">JK<div class="avatar__dot"></div></div>
+    </div>
+    <div class="sidebar">
+      <div class="sidebar__head">
+        <div class="eyebrow">Messages</div>
+        <div class="search">⌕&nbsp; Search conversations</div>
+      </div>
+      <div class="list">
+        <div class="item is-active is-unread">
+          <div class="avatar">AI<div class="avatar__dot"></div></div>
+          <div class="item__t">
+            <div class="item__name">Aurora Infra <span class="item__time">12:04</span></div>
+            <div class="item__prev">Deploy is green — tokens look sharp 🌌</div>
+          </div>
+          <span class="badge">3</span>
+        </div>
+        <div class="item">
+          <div class="avatar avatar--d2">MS<div class="avatar__dot avatar__dot--away"></div></div>
+          <div class="item__t">
+            <div class="item__name">Mira &amp; Sven <span class="item__time">11:47</span></div>
+            <div class="item__prev">Mira: pushing the composer fix now</div>
+          </div>
+        </div>
+        <div class="item">
+          <div class="avatar avatar--d3">DS</div>
+          <div class="item__t">
+            <div class="item__name">Design System <span class="item__time">Tue</span></div>
+            <div class="item__prev">You: contrast checked on all surfaces ✓</div>
+          </div>
+        </div>
+        <div class="item">
+          <div class="avatar" style="background:var(--bg-raised-4);color:var(--text-secondary)">LM</div>
+          <div class="item__t">
+            <div class="item__name">Launch crew <span class="item__time">Mon</span></div>
+            <div class="item__prev">12 people · muted</div>
+          </div>
+        </div>
+        <div class="item" style="gap:12px">
+          <div class="sk" style="width:36px;height:36px;border-radius:9999px;flex:none"></div>
+          <div style="flex:1">
+            <div class="sk" style="height:10px;width:60%"></div>
+            <div class="sk" style="height:10px;width:85%;margin-top:8px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="chat">
+      <div class="header">
+        <div class="avatar">AI<div class="avatar__dot"></div></div>
+        <div>
+          <div class="name">Aurora Infra</div>
+          <div class="status"><span class="dot"></span> 4 online · typing…</div>
+        </div>
+        <div style="margin-left:auto" class="row">
+          <button class="btn btn--ghost btn--icon">⌕</button>
+          <button class="btn btn--ghost btn--icon">☰</button>
+        </div>
+      </div>
+      <div class="thread">
+        <div class="day">Today</div>
+        <div class="msg">
+          <div class="avatar">MS<div class="avatar__dot"></div></div>
+          <div class="msg__body">
+            <div class="bub">Morning! I pushed the dark theme for review — tokens are in one place now.</div>
+            <div class="bub">Tell me if the violet reads as too loud on the bubbles.</div>
+            <div class="meta">11:58</div>
+          </div>
+        </div>
+        <div class="msg msg--out">
+          <div class="avatar avatar--sm" style="background:var(--gradient-brand);color:var(--text-on-brand)">JK</div>
+          <div class="msg__body">
+            <div class="bub">No, it's exactly right — one accent, everything else stays quiet. Love the glow on send 🔥</div>
+            <div class="meta meta--out">12:01 <span class="tick">✓✓</span></div>
+            <div class="row" style="gap:6px;justify-content:flex-end">
+              <span class="react is-on">🔥 2</span><span class="react">🎯 1</span>
+            </div>
+          </div>
+        </div>
+        <div class="msg">
+          <div class="avatar">AI<div class="avatar__dot"></div></div>
+          <div class="msg__body">
+            <div class="bub" style="display:flex"><span class="typing"><i></i><i></i><i></i></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <button class="btn btn--ghost btn--icon">＋</button>
+        <div class="field is-focus">Message Aurora Infra…</div>
+        <button class="btn btn--ghost btn--icon">☺</button>
+        <div class="send">➤</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Color — surfaces</h2>
+  <div class="grid g-auto">
+    <div class="sw"><div class="sw__chip" style="background:#05060A"></div><div class="sw__meta"><div class="sw__name">sunken</div><div class="sw__hex">#05060A</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#08090D"></div><div class="sw__meta"><div class="sw__name">base</div><div class="sw__hex">#08090D</div><div class="sw__note">app canvas</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#0E1017"></div><div class="sw__meta"><div class="sw__name">raised-1</div><div class="sw__hex">#0E1017</div><div class="sw__note">sidebar, header</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#14161F"></div><div class="sw__meta"><div class="sw__name">raised-2</div><div class="sw__hex">#14161F</div><div class="sw__note">bubble in</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#1B1E2A"></div><div class="sw__meta"><div class="sw__name">raised-3</div><div class="sw__hex">#1B1E2A</div><div class="sw__note">modal, hover row</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#2B303C"></div><div class="sw__meta"><div class="sw__name">raised-4</div><div class="sw__hex">#2B303C</div><div class="sw__note">tooltip, pressed</div></div></div>
+  </div>
+
+  <h2>Color — brand, accents, semantics</h2>
+  <div class="grid g-auto">
+    <div class="sw"><div class="sw__chip" style="background:#7C5CFF"></div><div class="sw__meta"><div class="sw__name">brand-500</div><div class="sw__hex">#7C5CFF</div><div class="sw__note">primary accent</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#8F75FF"></div><div class="sw__meta"><div class="sw__name">brand-400</div><div class="sw__hex">#8F75FF</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#6A48F0"></div><div class="sw__meta"><div class="sw__name">brand-600</div><div class="sw__hex">#6A48F0</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#22D3EE"></div><div class="sw__meta"><div class="sw__name">accent-cyan</div><div class="sw__hex">#22D3EE</div><div class="sw__note">read receipts</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#F472B6"></div><div class="sw__meta"><div class="sw__name">accent-magenta</div><div class="sw__hex">#F472B6</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#34D399"></div><div class="sw__meta"><div class="sw__name">success</div><div class="sw__hex">#34D399</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#FBBF24"></div><div class="sw__meta"><div class="sw__name">warning</div><div class="sw__hex">#FBBF24</div></div></div>
+    <div class="sw"><div class="sw__chip" style="background:#FB7185"></div><div class="sw__meta"><div class="sw__name">danger</div><div class="sw__hex">#FB7185</div></div></div>
+  </div>
+
+  <h2>Text &amp; borders</h2>
+  <div class="grid g-2">
+    <div class="card">
+      <div style="color:var(--text-primary);font-weight:600">text-primary · #F4F6FA · 17.1:1</div>
+      <div style="color:var(--text-secondary);margin-top:6px">text-secondary · #A8AFC0 · 8.4:1 — previews &amp; labels</div>
+      <div style="color:var(--text-tertiary);margin-top:6px;font-size:13px">text-tertiary · #7E8798 · 4.9:1 — meta only</div>
+      <div style="color:var(--text-disabled);margin-top:6px">text-disabled · #5C6474 — non-interactive</div>
+      <div style="color:var(--text-brand);margin-top:6px">text-brand · #A794FF — links &amp; @mentions</div>
+    </div>
+    <div class="card">
+      <div style="height:1px;background:rgba(255,255,255,.06);margin:8px 0 14px"></div>
+      <div class="mono">border-subtle · rgba(255,255,255,.06)</div>
+      <div style="height:1px;background:rgba(255,255,255,.10);margin:8px 0 14px"></div>
+      <div class="mono">border-default · .10</div>
+      <div style="height:1px;background:rgba(255,255,255,.16);margin:8px 0 14px"></div>
+      <div class="mono">border-strong · .16</div>
+      <div style="height:2px;background:rgba(124,92,255,.55);margin:8px 0 14px"></div>
+      <div class="mono">border-brand (focus / active tabs only)</div>
+    </div>
+  </div>
+
+  <h2>Gradients</h2>
+  <div class="grid g-2">
+    <div class="grad" style="background:var(--gradient-aurora)">gradient-aurora 135°</div>
+    <div class="grad" style="background:var(--gradient-brand)">gradient-brand 135°</div>
+    <div class="grad" style="background:var(--gradient-brand-deep)">gradient-brand-deep 160°</div>
+    <div class="grad" style="background:var(--gradient-own-bubble)">gradient-own-bubble 160°</div>
+    <div class="grad" style="background:var(--gradient-glow-top),var(--bg-raised-2);color:var(--text-secondary)">gradient-glow-top (ambient)</div>
+    <div class="grad" style="background:var(--gradient-mesh),var(--bg-raised-2);color:var(--text-secondary)">gradient-mesh (empty states)</div>
+    <div class="grad" style="background:var(--gradient-text-brand);-webkit-background-clip:text;background-clip:text;color:transparent;font-size:20px;align-items:center">gradient-text-brand</div>
+    <div class="grad" style="background:var(--gradient-brand);font-family:var(--font-sans);font-weight:600;align-items:center;color:#0B0714;text-shadow:none">on-brand text uses #0B0714</div>
+  </div>
+
+  <h2>Typography</h2>
+  <div class="card">
+    <div class="type-row"><span class="mono">display-lg 38/46 · 600</span><span style="font:600 38px/46px var(--font-display);letter-spacing:-.02em;background:var(--gradient-text);-webkit-background-clip:text;background-clip:text;color:transparent">Say more with less</span></div>
+    <div class="type-row"><span class="mono">title-lg 20/28 · 600</span><span style="font:600 20px/28px var(--font-display);letter-spacing:-.011em">Conversation with Aurora Infra</span></div>
+    <div class="type-row"><span class="mono">body 15/24 · 400</span><span>Messages are the interface — 15/24 keeps a 60-message thread effortless to read.</span></div>
+    <div class="type-row"><span class="mono">body-sm 13/20 · 400</span><span style="color:var(--text-secondary)">Sidebar previews and dense settings use body-sm.</span></div>
+    <div class="type-row"><span class="mono">caption 12/16 · 500</span><span style="font-size:12px;font-weight:500;color:var(--text-tertiary)">12:04 · Edited · read ✓✓ (tabular-nums)</span></div>
+    <div class="type-row" style="border-bottom:none"><span class="mono">micro 11/16 · caps</span><span class="eyebrow">Section label</span></div>
+    <div class="row" style="margin-top:16px">
+      <span class="wordmark">Nocturne wordmark — Space Grotesk</span>
+      <span class="mono">const invite = "NCT-4417"</span>
+    </div>
+  </div>
+
+  <h2>Components</h2>
+  <div class="grid g-2">
+    <div class="card">
+      <h3>Buttons</h3>
+      <div class="row"><button class="btn btn--primary">Primary</button><button class="btn">Secondary</button><button class="btn btn--ghost">Ghost</button><button class="btn btn--danger">Delete</button><button class="btn btn--icon">＋</button></div>
+      <h3 style="margin-top:20px">Inputs</h3>
+      <label class="lbl" for="a">Display name</label>
+      <input class="inp" id="a" placeholder="Type something…">
+      <h3 style="margin-top:20px">Badges, tags, reactions</h3>
+      <div class="row"><span class="badge">3</span><span class="badge">12</span><span class="tag">Design</span><span class="tag">Launch crew</span><span class="react is-on">🔥 2</span><span class="react">🎯 1</span></div>
+      <h3 style="margin-top:20px">Presence &amp; receipts</h3>
+      <div class="row">
+        <div class="avatar">ON<div class="avatar__dot"></div></div>
+        <div class="avatar avatar--d2">AW<div class="avatar__dot avatar__dot--away"></div></div>
+        <div class="avatar avatar--d3">OF<div class="avatar__dot" style="background:var(--presence-offline)"></div></div>
+        <span class="mono" style="color:var(--text-tertiary)">sent ✓ &nbsp; delivered ✓✓ &nbsp; read <span class="tick">✓✓</span></span>
+      </div>
+      <h3 style="margin-top:20px">Skeleton loading</h3>
+      <div class="row" style="gap:12px;flex-wrap:nowrap">
+        <div class="sk" style="width:36px;height:36px;border-radius:9999px;flex:none"></div>
+        <div style="flex:1"><div class="sk" style="height:12px;width:70%"></div><div class="sk" style="height:12px;width:45%;margin-top:8px"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Messages &amp; motion</h3>
+      <div class="grid" style="gap:8px">
+        <div class="msg" style="max-width:100%"><div class="avatar avatar--sm">MS<div class="avatar__dot"></div></div><div class="msg__body"><div class="bub" style="border-radius:18px 18px 18px 6px">Incoming: raised-2, hairline, tail corner 6px.</div><div class="meta">11:58</div></div></div>
+        <div class="msg msg--out" style="max-width:100%"><div class="avatar avatar--sm" style="background:var(--gradient-brand);color:var(--text-on-brand)">JK</div><div class="msg__body"><div class="bub">Outgoing: violet gradient + inner top highlight.</div><div class="meta meta--out">12:01 <span class="tick">✓✓</span></div></div></div>
+      </div>
+      <h3 style="margin-top:20px">Elevation recipe</h3>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:10px">
+        <div class="elev" style="background:var(--bg-raised-1)">raised-1</div>
+        <div class="elev" style="background:var(--bg-raised-2)">raised-2</div>
+        <div class="elev" style="background:var(--bg-raised-3);box-shadow:var(--shadow-lg),var(--shadow-inner-top)">raised-3</div>
+      </div>
+      <p>Elevation = brighter surface + <span class="mono">shadow.md</span> + <span class="mono">inset 0 1px 0 rgba(255,255,255,.08)</span> + optional 1px hairline. Never a white border.</p>
+      <h3 style="margin-top:20px">Radius &amp; spacing scale</h3>
+      <div class="row" style="margin-bottom:12px">
+        <span class="tag" style="border-radius:6px">6</span><span class="tag" style="border-radius:10px">10</span><span class="tag" style="border-radius:14px">14</span><span class="tag" style="border-radius:18px">18</span><span class="tag" style="border-radius:24px">24</span><span class="tag" style="border-radius:9999px">full</span>
+      </div>
+      <div class="scale">
+        <div style="height:8px"></div><div style="height:16px"></div><div style="height:24px"></div><div style="height:32px"></div><div style="height:40px"></div><div style="height:48px"></div><div style="height:56px"></div><div style="height:64px"></div>
+      </div>
+      <div class="mono">4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48 · 64 px</div>
+    </div>
+  </div>
+
+  <h2>Empty state</h2>
+  <div class="empty">
+    <h3 style="font-size:20px;line-height:28px">Pick up where you left off</h3>
+    <p style="max-width:42ch;margin:8px auto 20px">No unread messages. Start something new — tokens, gradients and components are ready for you.</p>
+    <button class="btn btn--primary">New conversation</button>
+  </div>
+
+  <p style="margin-top:48px;color:var(--text-tertiary);font-size:12px">
+    Nocturne v1.0.0 — dark-first chat design system. Source of truth: <span class="mono">nocturne.tokens.json</span> · CSS: <span class="mono">nocturne.css</span> · Tailwind: <span class="mono">tailwind.config.js</span> · Spec: <span class="mono">DESIGN-SYSTEM.md</span>
+  </p>
+</div>
+</body>
+</html>

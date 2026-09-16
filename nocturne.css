@@ -1,0 +1,135 @@
+/* ============================================================================
+   Nocturne — dark-first design system for a sleek modern chat app
+   v1.0.0 · import this once, then build UI from var(--...) tokens only.
+   ========================================================================== */
+:root {
+  color-scheme: dark;
+
+  /* ---- Neutrals ------------------------------------------------------- */
+  --n-0:#FFFFFF; --n-50:#F4F6FA; --n-100:#E6E9F2; --n-200:#CDD3E0; --n-300:#A8AFC0;
+  --n-400:#7E8798; --n-500:#5C6474; --n-600:#414856; --n-700:#2B303C; --n-800:#1B1E2A;
+  --n-850:#14161F; --n-900:#0E1017; --n-950:#08090D; --n-1000:#05060A;
+
+  /* ---- Brand & accents ------------------------------------------------ */
+  --brand-300:#A794FF; --brand-400:#8F75FF; --brand-500:#7C5CFF; --brand-600:#6A48F0; --brand-800:#3D2596;
+  --accent-cyan:#22D3EE; --accent-magenta:#F472B6; --accent-lime:#A3E635;
+  --success:#34D399; --warning:#FBBF24; --danger:#FB7185; --info:#38BDF8;
+
+  /* ---- Semantic surfaces --------------------------------------------- */
+  --bg-sunken:var(--n-1000); --bg-base:var(--n-950); --bg-raised-1:var(--n-900);
+  --bg-raised-2:var(--n-850); --bg-raised-3:var(--n-800); --bg-raised-4:var(--n-700);
+  --bg-glass:rgba(20,22,31,.72); --bg-overlay:rgba(5,6,10,.72);
+
+  /* ---- Text ----------------------------------------------------------- */
+  --text-primary:var(--n-50); --text-secondary:var(--n-300); --text-tertiary:var(--n-400);
+  --text-disabled:var(--n-500); --text-brand:var(--brand-300); --text-on-brand:#0B0714;
+
+  /* ---- Borders -------------------------------------------------------- */
+  --border-subtle:rgba(255,255,255,.06); --border-default:rgba(255,255,255,.10);
+  --border-strong:rgba(255,255,255,.16); --border-brand:rgba(124,92,255,.55);
+  --border-highlight:rgba(255,255,255,.08);
+
+  /* ---- Presence ------------------------------------------------------- */
+  --presence-online:#34D399; --presence-away:#FBBF24; --presence-busy:#FB7185; --presence-offline:var(--n-500);
+
+  /* ---- Gradients ------------------------------------------------------ */
+  --gradient-aurora:linear-gradient(135deg,#7C5CFF 0%,#22D3EE 100%);
+  --gradient-brand:linear-gradient(135deg,#8F75FF 0%,#6A48F0 100%);
+  --gradient-brand-deep:linear-gradient(160deg,#6A48F0 0%,#3D2596 100%);
+  --gradient-own-bubble:linear-gradient(160deg,#7C5CFF 0%,#6244E8 100%);
+  --gradient-text:linear-gradient(92deg,#FFFFFF 0%,#A8AFC0 100%);
+  --gradient-text-brand:linear-gradient(92deg,#A794FF 0%,#22D3EE 100%);
+  --gradient-glow-top:radial-gradient(120% 80% at 50% -20%,rgba(124,92,255,.28) 0%,rgba(124,92,255,0) 60%);
+  --gradient-glow-corner:radial-gradient(60% 60% at 100% 0%,rgba(34,211,238,.16) 0%,rgba(34,211,238,0) 70%);
+  --gradient-mesh:radial-gradient(50% 50% at 20% 20%,rgba(124,92,255,.20) 0%,transparent 70%),
+                  radial-gradient(50% 50% at 80% 30%,rgba(34,211,238,.14) 0%,transparent 70%),
+                  radial-gradient(60% 60% at 50% 90%,rgba(244,114,182,.12) 0%,transparent 70%);
+  --gradient-shimmer:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.06) 50%,rgba(255,255,255,0) 100%);
+  --gradient-scrim:linear-gradient(180deg,rgba(8,9,13,0) 0%,rgba(8,9,13,.9) 70%,#08090D 100%);
+
+  /* ---- Typography ----------------------------------------------------- */
+  --font-sans:Inter,'Inter var',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-display:'Inter Tight',Inter,sans-serif;
+  --font-wordmark:'Space Grotesk',Inter,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --text-micro:11px/16px var(--font-sans); --text-caption:12px/16px var(--font-sans);
+  --text-body-sm:13px/20px var(--font-sans); --text-body:15px/24px var(--font-sans);
+  --text-title-md:17px/24px var(--font-sans); --text-title-lg:20px/28px var(--font-display);
+  --text-display-sm:24px/32px var(--font-display); --text-display-md:30px/38px var(--font-display);
+  --text-display-lg:38px/46px var(--font-display); --text-display-xl:48px/56px var(--font-display);
+  --tracking-tight:-.02em; --tracking-snug:-.011em; --tracking-caps:.06em;
+
+  /* ---- Space / radius / shadow / blur / motion ------------------------ */
+  --s-1:4px; --s-2:8px; --s-3:12px; --s-4:16px; --s-5:20px; --s-6:24px; --s-8:32px; --s-10:40px; --s-12:48px; --s-16:64px;
+  --r-xs:6px; --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:24px; --r-2xl:32px; --r-full:9999px;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.4); --shadow-sm:0 2px 8px rgba(0,0,0,.36);
+  --shadow-md:0 8px 24px rgba(0,0,0,.44); --shadow-lg:0 16px 40px rgba(0,0,0,.52);
+  --shadow-xl:0 32px 72px rgba(0,0,0,.60);
+  --shadow-glow-brand:0 8px 28px rgba(124,92,255,.36); --shadow-glow-cyan:0 8px 28px rgba(34,211,238,.28);
+  --shadow-ring:inset 0 0 0 1px rgba(255,255,255,.08); --shadow-inner-top:inset 0 1px 0 rgba(255,255,255,.08);
+  --shadow-focus:0 0 0 2px var(--bg-base),0 0 0 4px rgba(124,92,255,.75);
+  --blur-sm:blur(8px); --blur-md:blur(16px); --blur-lg:blur(24px) saturate(140%); --blur-xl:blur(48px) saturate(160%);
+  --dur-instant:80ms; --dur-fast:140ms; --dur-base:200ms; --dur-slow:320ms; --dur-slower:480ms;
+  --ease-standard:cubic-bezier(.2,0,0,1); --ease-enter:cubic-bezier(0,0,.2,1);
+  --ease-exit:cubic-bezier(.4,0,1,1); --ease-spring:cubic-bezier(.34,1.56,.64,1);
+
+  /* ---- Layout --------------------------------------------------------- */
+  --sidebar-w:320px; --header-h:64px; --composer-h:56px; --message-col-max:720px; --rail-w:72px;
+}
+
+/* ---- Base reset ------------------------------------------------------- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg-base); color:var(--text-primary);
+  font:var(--text-body); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+::selection{background:rgba(124,92,255,.35)}
+:focus-visible{outline:none;box-shadow:var(--shadow-focus);border-radius:var(--r-sm)}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:var(--r-full);border:2px solid transparent;background-clip:content-box}
+*::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.22);background-clip:content-box}
+
+/* ---- Utility primitives ---------------------------------------------- */
+.u-glass{background:var(--bg-glass);backdrop-filter:var(--blur-lg);-webkit-backdrop-filter:var(--blur-lg)}
+.u-elevated{background:var(--bg-raised-2);border:1px solid var(--border-subtle);box-shadow:var(--shadow-md),var(--shadow-inner-top)}
+.u-gradient-text{background:var(--gradient-text-brand);-webkit-background-clip:text;background-clip:text;color:transparent}
+.u-ambient{position:relative}
+.u-ambient::before{content:"";position:absolute;inset:0;background:var(--gradient-glow-top);pointer-events:none}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* ---- Components ------------------------------------------------------- */
+.btn{display:inline-flex;align-items:center;gap:var(--s-2);height:38px;padding:0 var(--s-4);
+  font:var(--text-body-sm);font-weight:600;color:var(--text-primary);background:var(--bg-raised-3);
+  border:1px solid var(--border-default);border-radius:var(--r-sm);cursor:pointer;
+  transition:all var(--dur-fast) var(--ease-standard)}
+.btn:hover{background:var(--bg-raised-4);transform:translateY(-1px);box-shadow:var(--shadow-md)}
+.btn:active{transform:scale(.98);transition-duration:var(--dur-instant)}
+.btn--primary{background:var(--gradient-brand);border-color:transparent;color:var(--text-on-brand);box-shadow:var(--shadow-glow-brand),var(--shadow-inner-top)}
+.btn--primary:hover{filter:brightness(1.08)}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--text-secondary)}
+.btn--ghost:hover{background:var(--bg-raised-2);box-shadow:none}
+.bubble{max-width:min(72ch,68%);padding:10px 14px;border-radius:18px 18px 18px 6px;
+  font:var(--text-body);border:1px solid var(--border-subtle);background:var(--bg-raised-2);
+  animation:bubbleIn var(--dur-base) var(--ease-enter) both}
+.bubble--out{margin-left:auto;background:var(--gradient-own-bubble);border-color:transparent;
+  border-radius:18px 18px 6px 18px;box-shadow:var(--shadow-sm),var(--shadow-inner-top)}
+@keyframes bubbleIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.card{background:var(--bg-raised-2);border:1px solid var(--border-subtle);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-md),var(--shadow-inner-top)}
+.avatar{width:36px;height:36px;border-radius:var(--r-full);background:var(--gradient-aurora);
+  display:grid;place-items:center;font:var(--text-caption);font-weight:700;color:#fff;position:relative;flex:none}
+.avatar__dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:var(--r-full);
+  background:var(--presence-online);box-shadow:0 0 0 2px var(--bg-base)}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
+  padding:0 6px;border-radius:var(--r-full);background:var(--gradient-aurora);color:var(--text-on-brand);
+  font:var(--text-micro);font-weight:700}
+.skeleton{border-radius:var(--r-sm);background:var(--bg-raised-2);position:relative;overflow:hidden}
+.skeleton::after{content:"";position:absolute;inset:0;background:var(--gradient-shimmer);
+  animation:shimmer 1.4s linear infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
