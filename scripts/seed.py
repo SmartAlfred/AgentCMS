@@ -1,6 +1,11 @@
-"""Seed the database with demo data (#3).
+"""Seed the database with demo data (#3, fixed for #28).
 
-Creates: 1 demo site, 3 posts, 1 API token actor + capability link.
+Creates: 1 demo site, 3 posts, 1 machine actor + 1 capability link.
+
+The token is minted with the real service helper, so the printed value is the
+``cap_<site_slug>_<random>`` shape that ``/c/{token}`` actually accepts --
+and the whole script is idempotent: re-running it reuses the demo site/actor
+and refreshes the demo link in place instead of exploding on unique slugs.
 
 Usage::
 
@@ -10,8 +15,6 @@ Usage::
 
 from __future__ import annotations
 
-import hashlib
-import secrets
 import sys
 import uuid
 from pathlib import Path
@@ -27,75 +30,98 @@ from app.models.capability_link import CapabilityLink
 from app.models.post import Post
 from app.models.post_revision import PostRevision
 from app.models.site import Site
+from app.services.capability_tokens import ALL_VERBS, generate_capability_token
+from sqlalchemy import select
 
-
-def _hash_token(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
+DEMO_ACTOR_LABEL = "Demo API Token"
+DEMO_LINK_LABEL = "Demo capability link"
+DEMO_POSTS: list[dict[str, str]] = [
+    {
+        "slug": "hello-world",
+        "title": "Hello World",
+        "body_md": "# Hello World\n\nThis is the first post on the demo blog.",
+        "status": "published",
+    },
+    {
+        "slug": "getting-started",
+        "title": "Getting Started with AgentCMS",
+        "body_md": "# Getting Started\n\nAgentCMS is a CMS whose first user is an AI agent.",
+        "status": "draft",
+    },
+    {
+        "slug": "api-overview",
+        "title": "API Overview",
+        "body_md": "# API Overview\n\nAll errors are `application/problem+json` with a `hint`.",
+        "status": "pending_review",
+    },
+]
 
 
 def seed() -> str:
-    """Run the seed.  Returns the raw token for the caller to display."""
+    """Run the seed.  Returns the raw capability token for the caller to display.
+
+    Idempotent: an existing demo site/actor/post is reused and the demo capability
+    link is refreshed in place, so ``make seed`` can be run repeatedly (#28).
+    """
     settings = get_settings()
+    slug = settings.default_site_slug
 
     with session_scope() as session:
         # --- site -----------------------------------------------------------------
-        site = Site(
-            id=uuid.uuid4(),
-            slug=settings.default_site_slug,
-            name="Demo Blog",
-            base_url="https://blog.example.com",
-            publish_mode=settings.default_publish_mode,
-            settings={"description": "A demo site for testing AgentCMS."},
-        )
-        session.add(site)
-        session.flush()
+        site = session.scalar(select(Site).where(Site.slug == slug))
+        if site is None:
+            site = Site(
+                id=uuid.uuid4(),
+                slug=slug,
+                name="Demo Blog",
+                base_url="https://blog.example.com",
+                publish_mode=settings.default_publish_mode,
+                settings={"description": "A demo site for testing AgentCMS."},
+            )
+            session.add(site)
+            session.flush()
 
         # --- actor (machine) ------------------------------------------------------
-        actor = Actor(
-            id=uuid.uuid4(),
-            kind="machine",
-            label="Demo API Token",
-            site_id=site.id,
-            scopes=["posts:read", "posts:write", "posts:publish"],
-        )
-        session.add(actor)
-        session.flush()
+        actor = session.scalar(select(Actor).where(Actor.site_id == site.id, Actor.label == DEMO_ACTOR_LABEL))
+        if actor is None:
+            actor = Actor(
+                id=uuid.uuid4(),
+                kind="machine",
+                label=DEMO_ACTOR_LABEL,
+                site_id=site.id,
+                scopes=["posts:read", "posts:write", "posts:publish"],
+            )
+            session.add(actor)
+            session.flush()
+        actor.revoked_at = None
 
         # --- capability link ------------------------------------------------------
-        raw_token = secrets.token_urlsafe(32)
-        token_hash = _hash_token(raw_token)
-        cap_link = CapabilityLink(
-            id=uuid.uuid4(),
-            actor_id=actor.id,
-            token_hash=token_hash,
-            path_scope="/v1/sites/blog/posts",
-            verbs=["GET", "POST", "PATCH"],
-            uses_remaining=1000,
+        # Minted with the real service helper so the plaintext is the
+        # ``cap_<site_slug>_<random>`` shape that /c/{token} accepts, with
+        # sha256(random + secret_key) stored at rest (#28).
+        raw_token, token_hash = generate_capability_token(slug)
+        link = session.scalar(
+            select(CapabilityLink).where(
+                CapabilityLink.actor_id == actor.id,
+                CapabilityLink.label == DEMO_LINK_LABEL,
+            )
         )
-        session.add(cap_link)
+        if link is None:
+            link = CapabilityLink(id=uuid.uuid4(), actor_id=actor.id, label=DEMO_LINK_LABEL)
+            session.add(link)
+        link.token_hash = token_hash
+        link.site_slug = slug
+        link.path_scope = f"/v1/sites/{slug}/posts"
+        link.verbs = sorted(ALL_VERBS)
+        link.uses_remaining = 1000
+        link.uses_count = 0
+        link.revoked_at = None
+        link.expires_at = None
 
         # --- posts ----------------------------------------------------------------
-        posts_data = [
-            {
-                "slug": "hello-world",
-                "title": "Hello World",
-                "body_md": "# Hello World\n\nThis is the first post on the demo blog.",
-                "status": "published",
-            },
-            {
-                "slug": "getting-started",
-                "title": "Getting Started with AgentCMS",
-                "body_md": "# Getting Started\n\nAgentCMS is a CMS whose first user is an AI agent.",
-                "status": "draft",
-            },
-            {
-                "slug": "api-overview",
-                "title": "API Overview",
-                "body_md": "# API Overview\n\nAll errors are `application/problem+json` with a `hint`.",
-                "status": "pending_review",
-            },
-        ]
-        for data in posts_data:
+        for data in DEMO_POSTS:
+            if session.scalar(select(Post).where(Post.site_id == site.id, Post.slug == data["slug"])):
+                continue
             post = Post(
                 id=uuid.uuid4(),
                 site_id=site.id,
@@ -110,17 +136,18 @@ def seed() -> str:
             session.add(post)
             session.flush()
 
-            rev = PostRevision(
-                id=uuid.uuid4(),
-                post_id=post.id,
-                revision=1,
-                title=data["title"],
-                body_md=data["body_md"],
-                status=data["status"],
-                editor_label="Demo Bot",
-                actor_id=actor.id,
+            session.add(
+                PostRevision(
+                    id=uuid.uuid4(),
+                    post_id=post.id,
+                    revision=1,
+                    title=data["title"],
+                    body_md=data["body_md"],
+                    status=data["status"],
+                    editor_label="Demo Bot",
+                    actor_id=actor.id,
+                )
             )
-            session.add(rev)
 
     return raw_token
 
@@ -130,10 +157,13 @@ def main() -> None:
     reset_settings_cache()
     token = seed()
     settings = get_settings()
+    slug = settings.default_site_slug
     print(f"Seed complete for {settings.app_name}.")
-    print(f"  Demo site:     /v1/sites/{settings.default_site_slug}")
-    print(f"  API token:     {token}")
-    print("  Use:  Authorization: Bearer <token>")
+    print(f"  Demo site:         /v1/sites/{slug}")
+    print(f"  Capability token:  {token}")
+    print(f"  Instruction sheet: GET  /c/{token}")
+    print(f"  Write a draft:     POST /c/{token}/posts   (no Authorization header needed)")
+    print(f"  Public blog:       GET  /{slug}  ·  /{slug}/rss.xml  ·  /llms.txt")
 
 
 if __name__ == "__main__":
