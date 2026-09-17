@@ -19,6 +19,7 @@ branch and still learn *how* to fix it::
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -34,6 +35,15 @@ logger = logging.getLogger("app.errors")
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 PROBLEM_TYPE_BASE = "https://agentcms.dev/problems/"
+
+# Capability tokens are bearer secrets: they must never be echoed back in a body.
+_CAP_TOKEN_RE = re.compile(r"cap_[A-Za-z0-9_\-]+")
+
+
+def _redact_instance(path: str) -> str:
+    """Redact capability tokens out of the RFC 9457 `instance` member."""
+    return _CAP_TOKEN_RE.sub("cap_…***", path)
+
 
 _BLANK_BROWSER_HINT = (
     "See GET /docs for the interactive reference, or GET /openapi.json for the machine-readable contract."
@@ -58,7 +68,7 @@ def problem_response(
         "title": title,
         "status": status_code,
         "detail": detail,
-        "instance": request.url.path,
+        "instance": _redact_instance(request.url.path),
         "code": code,
         "request_id": getattr(request.state, "request_id", "-"),
     }

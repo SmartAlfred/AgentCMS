@@ -250,6 +250,9 @@ def scope_for_endpoint(method: str, path: str) -> str | None:
     # Admin routes need special handling
     if path.startswith("/v1/admin/"):
         return None  # handled by admin auth separately
+    # Capability link routes — handled by capability auth
+    if path.startswith("/c/"):
+        return None
 
     method_upper = method.upper()
 

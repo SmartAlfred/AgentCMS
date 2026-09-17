@@ -104,11 +104,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def register_v1_routes(app: FastAPI) -> None:
-    """Mount the versioned content API (implemented in #4)."""
+    """Mount the versioned content API (implemented in #4, #5, #6)."""
 
+    from app.api.v1.capability_links import router as cap_router
     from app.api.v1.routes import router as v1_router
 
     app.include_router(v1_router, prefix="/v1")
+    app.include_router(cap_router)
 
 
 app = create_app()

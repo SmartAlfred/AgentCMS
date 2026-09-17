@@ -1,7 +1,8 @@
-"""Logging setup (#2, extended by #5): one place that decides format and level.
+"""Logging setup (#2, extended by #5, #6): one place that decides format and level.
 
 Token redaction: any string matching ``acms_<hex>_<secret>`` is replaced with
-``acms_abc…***`` so that tokens never appear in logs.
+``acms_abc…***`` and any string matching ``cap_<site>_<random>`` is replaced
+with ``cap_<site>…***`` so that tokens never appear in logs.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from app.config import Settings
 _FORMAT = "%(asctime)s %(levelname)-8s %(name)s [%(request_id)s] %(message)s"
 
 _TOKEN_RE = re.compile(r"acms_[0-9a-f]{6}[0-9a-f]*_[A-Za-z0-9_-]{20,}")
+_CAP_TOKEN_RE = re.compile(r"cap_[a-zA-Z0-9_-]{1,128}_[A-Za-z0-9_-]{20,}")
 
 
 class _RequestIdFilter(logging.Filter):
@@ -26,21 +28,19 @@ class _RequestIdFilter(logging.Filter):
 
 
 class _TokenRedactionFilter(logging.Filter):
-    """Redact API tokens (``acms_*``) in log messages."""
+    """Redact API tokens (``acms_*`` and ``cap_*``) in log messages."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
             record.msg = _TOKEN_RE.sub(_redact_match, record.msg)
+            record.msg = _CAP_TOKEN_RE.sub(_redact_cap_match, record.msg)
         if record.args:
             if isinstance(record.args, dict):
                 record.args = {
-                    k: _TOKEN_RE.sub(_redact_match, v) if isinstance(v, str) else v
-                    for k, v in record.args.items()
+                    k: _redact_string(v) if isinstance(v, str) else v for k, v in record.args.items()
                 }
             elif isinstance(record.args, tuple):
-                record.args = tuple(
-                    _TOKEN_RE.sub(_redact_match, v) if isinstance(v, str) else v for v in record.args
-                )
+                record.args = tuple(_redact_string(v) if isinstance(v, str) else v for v in record.args)
         return True
 
 
@@ -49,6 +49,25 @@ def _redact_match(match: re.Match[str]) -> str:
     full = match.group(0)
     prefix = full[:10]  # "acms_abcde" (prefix + 5 hex of actor_id)
     return f"{prefix}…***"
+
+
+def _redact_cap_match(match: re.Match[str]) -> str:
+    """Replace a capability token match with ``cap_<site>…***``."""
+    full = match.group(0)
+    # Extract site slug: everything between "cap_" and the second "_"
+    after_prefix = full[4:]  # remove "cap_"
+    site_end = after_prefix.find("_")
+    if site_end == -1:
+        return "***"
+    site_slug = after_prefix[:site_end]
+    return f"cap_{site_slug}_…***"
+
+
+def _redact_string(value: str) -> str:
+    """Apply both acms_* and cap_* redaction to a string."""
+    value = _TOKEN_RE.sub(_redact_match, value)
+    value = _CAP_TOKEN_RE.sub(_redact_cap_match, value)
+    return value
 
 
 def configure_logging(settings: Settings) -> None:

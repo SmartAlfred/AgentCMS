@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     default_publish_mode: PublishMode = "auto"
     idempotency_retention_hours: int = 24
 
+    # -- capability links (#6) -----------------------------------------------
+    capability_default_ttl_minutes: int = 60
+    capability_max_ttl_days: int = 30
+    capability_rate_limit_per_link: int = 30
+    capability_rate_limit_window_seconds: int = 60
+    capability_max_live_links_per_site: int = 100
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
