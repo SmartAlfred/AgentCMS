@@ -17,6 +17,7 @@ from typing import ClassVar
 import pytest
 from app.db.session import session_scope
 from app.domain.errors import SlugConflictError
+from app.models.actor import Actor
 from app.models.post import Post
 from app.models.post_revision import PostRevision
 from app.models.redirect import Redirect
@@ -43,6 +44,17 @@ def _make_site(session: Session, slug: str = "blog") -> Site:
     session.add(site)
     session.flush()
     return site
+
+
+def _make_actor(session: Session) -> Actor:
+    actor = Actor(
+        id=uuid.uuid4(),
+        kind="human",
+        label="test-actor",
+    )
+    session.add(actor)
+    session.flush()
+    return actor
 
 
 def _make_post(session: Session, site: Site, slug: str = "hello") -> Post:
@@ -173,6 +185,7 @@ class TestConstraints:
 
     def test_post_revisions_post_id_fk(self, db: Session) -> None:
         """post_revisions.post_id references posts.id."""
+        actor = _make_actor(db)
         fake_post_id = uuid.uuid4()
         rev = PostRevision(
             id=uuid.uuid4(),
@@ -181,6 +194,7 @@ class TestConstraints:
             title="rev",
             body_md="rev",
             status="draft",
+            actor_id=actor.id,
         )
         db.add(rev)
         with pytest.raises(IntegrityError):
@@ -237,6 +251,7 @@ class TestSoftDelete:
 
     def test_soft_delete_preserves_revisions(self, db: Session) -> None:
         site = _make_site(db)
+        actor = _make_actor(db)
         post = _make_post(db, site, slug="to-delete")
         post.revision_count = 1
         rev = PostRevision(
@@ -246,6 +261,7 @@ class TestSoftDelete:
             title="to-delete",
             body_md="# to-delete",
             status="draft",
+            actor_id=actor.id,
         )
         db.add(rev)
         db.flush()

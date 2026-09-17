@@ -15,6 +15,7 @@ Design principles (from the ticket):
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import re
 import uuid
@@ -29,6 +30,7 @@ from app.domain.errors import (
     InvalidCursorError,
     InvalidTransitionError,
     PostNotFoundError,
+    RevisionNotFoundError,
     SiteNotFoundError,
     SlugConflictError,
     SlugInvalidError,
@@ -87,13 +89,48 @@ def _make_content_hash(body_md: str) -> str:
     return hashlib.sha256(body_md.encode()).hexdigest()
 
 
+def _compute_diff(prev_body: str, new_body: str, prev_title: str = "", new_title: str = "") -> str | None:
+    """Compute a unified diff between two revisions' content."""
+    old_lines = (prev_title + "\n" + prev_body).splitlines(keepends=True)
+    new_lines = (new_title + "\n" + new_body).splitlines(keepends=True)
+    diff = list(
+        difflib.unified_diff(old_lines, new_lines, fromfile="a/revision", tofile="b/revision", lineterm="")
+    )
+    if not diff:
+        return None
+    return "\n".join(diff)
+
+
 def _create_revision(
     session: Session,
     post: Post,
     *,
-    actor_id: uuid.UUID | None = None,
-) -> None:
-    """Append a revision snapshot for the current state of the post."""
+    actor_id: uuid.UUID,
+    editor_label: str | None = None,
+    request_id: str | None = None,
+    source: str = "api",
+) -> PostRevision:
+    """Append a revision snapshot for the current state of the post.
+
+    Computes a unified diff against the previous revision and stores it.
+    The caller must have already set ``post.revision_count`` to the correct value.
+    """
+    prev_rev = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id)
+        .order_by(PostRevision.revision.desc())
+        .first()
+    )
+
+    diff_unified: str | None = None
+    if prev_rev is not None:
+        diff_unified = _compute_diff(
+            prev_rev.body_md,
+            post.body_md,
+            prev_rev.title,
+            post.title,
+        )
+
     rev = PostRevision(
         id=uuid.uuid4(),
         post_id=post.id,
@@ -103,8 +140,13 @@ def _create_revision(
         frontmatter=post.frontmatter,
         status=post.status,
         actor_id=actor_id,
+        editor_label=editor_label,
+        request_id=request_id,
+        source=source,
+        diff_unified=diff_unified,
     )
     session.add(rev)
+    return rev
 
 
 def _resolve_site(session: Session, site_slug: str) -> Site:
@@ -182,6 +224,8 @@ def create_post(
     tags: list[str] | None = None,
     excerpt: str | None = None,
     frontmatter: dict[str, Any] | None = None,
+    actor_id: uuid.UUID,
+    source: str = "api",
 ) -> tuple[Post, list[str]]:
     """Create a new post in draft status.
 
@@ -250,9 +294,9 @@ def create_post(
     session.add(post)
     session.flush()
 
-    # Create initial revision
-    _create_revision(session, post)
+    # Create initial revision (revision 1)
     post.revision_count = 1
+    _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
 
     # Handle tags
@@ -357,6 +401,8 @@ def update_post(
     tags: list[str] | None = None,
     excerpt: str | None = None,
     frontmatter: dict[str, Any] | None = None,
+    actor_id: uuid.UUID,
+    source: str = "api",
 ) -> tuple[Post, list[str]]:
     """Partially update a post.  Creates a revision snapshot.
     Returns ``(post, warnings)`` where warnings include markdown normalisation notes.
@@ -428,7 +474,7 @@ def update_post(
 
     if changed:
         post.revision_count += 1
-        _create_revision(session, post)
+        _create_revision(session, post, actor_id=actor_id, source=source)
         session.flush()
         session.commit()
 
@@ -440,7 +486,13 @@ def update_post(
 # ---------------------------------------------------------------------------
 
 
-def publish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
+def publish_post(
+    session: Session,
+    post_id: str,
+    *,
+    actor_id: uuid.UUID,
+    source: str = "api",
+) -> tuple[Post, list[str]]:
     """Publish a draft post.  Idempotent — publishing twice is a no-op."""
     post = _resolve_post(session, post_id)
     warnings: list[str] = []
@@ -459,7 +511,7 @@ def publish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
     post.status = "published"
     post.published_at = datetime.now(UTC)
     post.revision_count += 1
-    _create_revision(session, post)
+    _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
     session.commit()
     return post, warnings
@@ -470,7 +522,13 @@ def publish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def unpublish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
+def unpublish_post(
+    session: Session,
+    post_id: str,
+    *,
+    actor_id: uuid.UUID,
+    source: str = "api",
+) -> tuple[Post, list[str]]:
     """Unpublish a published post (back to draft)."""
     post = _resolve_post(session, post_id)
     warnings: list[str] = []
@@ -484,7 +542,7 @@ def unpublish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
 
     post.status = "draft"
     post.revision_count += 1
-    _create_revision(session, post)
+    _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
     session.commit()
     return post, warnings
@@ -495,7 +553,13 @@ def unpublish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def trash_post(session: Session, post_id: str) -> Post:
+def trash_post(
+    session: Session,
+    post_id: str,
+    *,
+    actor_id: uuid.UUID,
+    source: str = "api",
+) -> Post:
     """Soft-delete a post (status=trashed, deleted_at=now)."""
     post = _resolve_post(session, post_id)
 
@@ -505,10 +569,252 @@ def trash_post(session: Session, post_id: str) -> Post:
     post.status = "trashed"
     post.deleted_at = datetime.now(UTC)
     post.revision_count += 1
-    _create_revision(session, post)
+    _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
     session.commit()
     return post
+
+
+# ---------------------------------------------------------------------------
+# Restore
+# ---------------------------------------------------------------------------
+
+
+def restore_post(
+    session: Session,
+    post_id: str,
+    *,
+    actor_id: uuid.UUID,
+    source: str = "api",
+) -> tuple[Post, list[str]]:
+    """Restore a trashed post back to draft status."""
+    post = _resolve_post(session, post_id)
+    warnings: list[str] = []
+
+    if post.status != "trashed":
+        warnings.append(f"Post '{post.slug}' is not trashed; no change made.")
+        return post, warnings
+
+    post.status = "draft"
+    post.deleted_at = None
+    post.revision_count += 1
+    _create_revision(session, post, actor_id=actor_id, source=source)
+    session.flush()
+    session.commit()
+    return post, warnings
+
+
+# ---------------------------------------------------------------------------
+# Revisions — list, get, diff, revert, prune
+# ---------------------------------------------------------------------------
+
+REV_DEFAULT_LIMIT = 20
+REV_MAX_LIMIT = 100
+
+
+def list_revisions(
+    session: Session,
+    post_id: str,
+    *,
+    limit: int = REV_DEFAULT_LIMIT,
+    cursor: int | None = None,
+) -> tuple[list[PostRevision], int | None]:
+    """List revision metadata for a post (no body content, cheap for agents).
+
+    Returns ``(items, next_cursor)`` where next_cursor is the next revision
+    number to fetch, or None if there are no more.
+    """
+    if limit < 1 or limit > REV_MAX_LIMIT:
+        limit = max(1, min(limit, REV_MAX_LIMIT))
+
+    post = _resolve_post(session, post_id)
+
+    query = session.query(PostRevision).filter(PostRevision.post_id == post.id)
+
+    if cursor is not None:
+        query = query.filter(PostRevision.revision < cursor)
+
+    query = query.order_by(PostRevision.revision.desc())
+    items = query.limit(limit + 1).all()
+
+    next_cursor: int | None = None
+    if len(items) > limit:
+        last = items[limit - 1]
+        next_cursor = last.revision
+        items = items[:limit]
+
+    return items, next_cursor
+
+
+def get_revision(session: Session, post_id: str, revision: int) -> PostRevision:
+    """Get a full revision snapshot by post id and revision number."""
+    post = _resolve_post(session, post_id)
+    rev = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id, PostRevision.revision == revision)
+        .first()
+    )
+    if rev is None:
+        raise RevisionNotFoundError(post_id, revision)
+    return rev
+
+
+def get_diff(session: Session, post_id: str, from_rev: int, to_rev: int) -> dict[str, Any]:
+    """Get a unified diff between two revisions.
+
+    Returns a dict with ``from_revision``, ``to_revision``, ``diff_unified``,
+    and ``identical`` (bool).
+    """
+    if from_rev == to_rev:
+        return {"from_revision": from_rev, "to_revision": to_rev, "diff_unified": "", "identical": True}
+
+    post = _resolve_post(session, post_id)
+
+    rev_from = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id, PostRevision.revision == from_rev)
+        .first()
+    )
+    rev_to = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id, PostRevision.revision == to_rev)
+        .first()
+    )
+
+    if rev_from is None:
+        raise RevisionNotFoundError(post_id, from_rev)
+    if rev_to is None:
+        raise RevisionNotFoundError(post_id, to_rev)
+
+    diff_text = _compute_diff(rev_from.body_md, rev_to.body_md, rev_from.title, rev_to.title) or ""
+    return {
+        "from_revision": from_rev,
+        "to_revision": to_rev,
+        "diff_unified": diff_text,
+        "identical": diff_text == "",
+    }
+
+
+def revert_post(
+    session: Session,
+    post_id: str,
+    *,
+    target_revision: int,
+    actor_id: uuid.UUID,
+    reason: str | None = None,
+    source: str = "api",
+) -> Post:
+    """Revert a post to a previous revision.
+
+    Creates a **new** revision whose content equals the target revision.
+    History is never rewritten.
+    """
+    post = _resolve_post(session, post_id)
+
+    target = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id, PostRevision.revision == target_revision)
+        .first()
+    )
+    if target is None:
+        raise RevisionNotFoundError(post_id, target_revision)
+
+    # Apply the target revision's content to the post
+    post.title = target.title
+    post.body_md = target.body_md
+    post.frontmatter = target.frontmatter
+    post.status = target.status
+    post.content_hash = compute_content_hash(target.body_md)
+    post.word_count = compute_word_count(target.body_md)
+    post.reading_time_minutes = compute_reading_time_minutes(target.body_md)
+    post.excerpt = compute_excerpt(target.body_md)
+
+    if target.status == "trashed":
+        post.deleted_at = datetime.now(UTC)
+    else:
+        post.deleted_at = None
+
+    if target.status == "published":
+        post.published_at = post.published_at or datetime.now(UTC)
+
+    # Create a new revision (history is never rewritten)
+    post.revision_count += 1
+    _create_revision(session, post, actor_id=actor_id, source=source)
+    session.flush()
+    session.commit()
+    return post
+
+
+def prune_revisions(
+    session: Session,
+    post_id: str,
+    *,
+    keep_recent: int = 20,
+    draft_max_age_days: int = 30,
+) -> int:
+    """Prune old draft revisions beyond the retention policy.
+
+    Rules:
+    * Published posts keep all revisions forever.
+    * Draft/trashed posts: keep the most recent ``keep_recent`` revisions,
+      and prune any draft-status revisions older than ``draft_max_age_days``
+      beyond those.
+    * Never delete the current revision or the latest published revision.
+
+    Returns the number of revisions deleted.
+    """
+    post = _resolve_post(session, post_id)
+
+    # Never prune published posts
+    if post.status == "published":
+        return 0
+
+    all_revisions = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id)
+        .order_by(PostRevision.revision.desc())
+        .all()
+    )
+
+    if len(all_revisions) <= keep_recent:
+        return 0
+
+    # Identify revisions that must never be deleted
+    current_rev_num = post.revision_count
+    published_rev: PostRevision | None = (
+        session.query(PostRevision)
+        .filter(PostRevision.post_id == post.id, PostRevision.status == "published")
+        .order_by(PostRevision.revision.desc())
+        .first()
+    )
+    protected_revisions: set[int] = {current_rev_num}
+    if published_rev is not None:
+        protected_revisions.add(published_rev.revision)
+
+    from datetime import timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(days=draft_max_age_days)
+    # Make naive for comparison with DB timestamps (which may be naive)
+    cutoff_naive = cutoff.replace(tzinfo=None)
+
+    # Candidates: revisions beyond keep_recent that are draft and old enough
+    deletable: list[PostRevision] = []
+    for rev in all_revisions[keep_recent:]:
+        if rev.revision in protected_revisions:
+            continue
+        if rev.status != "draft":
+            continue
+        rev_created = rev.created_at.replace(tzinfo=None) if rev.created_at.tzinfo else rev.created_at
+        if rev_created < cutoff_naive:
+            deletable.append(rev)
+
+    for rev in deletable:
+        session.delete(rev)
+
+    if deletable:
+        session.flush()
+
+    return len(deletable)
 
 
 # ---------------------------------------------------------------------------

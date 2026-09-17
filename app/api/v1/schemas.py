@@ -101,3 +101,71 @@ class DryRunResponse(BaseModel):
 
     dry_run: bool = True
     would_create: PostRead | None = None
+
+
+# ---------------------------------------------------------------------------
+# Revision schemas
+# ---------------------------------------------------------------------------
+
+
+class RevisionMetadata(BaseModel):
+    """Lightweight revision info (no body) — cheap for agents to list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    revision: int
+    title: str
+    status: str
+    editor_label: str | None = None
+    actor_id: str
+    source: str
+    created_at: datetime
+    diff_unified: str | None = None
+
+
+class RevisionSnapshot(BaseModel):
+    """Full revision snapshot with content."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    post_id: str
+    revision: int
+    title: str
+    body_md: str
+    frontmatter: dict[str, Any] | None = None
+    status: str
+    editor_label: str | None = None
+    actor_id: str
+    request_id: str | None = None
+    source: str
+    created_at: datetime
+    diff_unified: str | None = None
+
+
+class RevisionListResponse(BaseModel):
+    """Cursor-paginated list of revision metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[RevisionMetadata]
+    next_cursor: int | None = None
+    count: int
+
+
+class RevertRequest(BaseModel):
+    """Request body for ``POST /v1/posts/{id}/revert``."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    revision: int
+    reason: str | None = None
+
+
+class DiffResponse(BaseModel):
+    """Unified diff between two revisions."""
+
+    from_revision: int
+    to_revision: int
+    diff_unified: str
+    identical: bool

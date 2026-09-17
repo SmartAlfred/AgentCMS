@@ -30,10 +30,11 @@ class PostRevision(Base):
     frontmatter: Mapped[dict | None] = mapped_column(JSONB, nullable=True, server_default="{}")
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft")
     editor_label: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("actors.id", ondelete="SET NULL"), nullable=True
+    actor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("actors.id", ondelete="SET NULL"), nullable=False
     )
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="api")
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     diff_unified: Mapped[str | None] = mapped_column(Text, nullable=True)
 

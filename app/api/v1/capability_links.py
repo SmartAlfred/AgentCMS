@@ -265,7 +265,7 @@ def create_post_via_link(
         raise CapabilityTokenError("Malformed capability token.")
 
     site_slug, _ = parsed
-    _actor, _link = _verify_link_auth(token, request, db, required_verb="posts:write")
+    actor, _link = _verify_link_auth(token, request, db, required_verb="posts:write")
 
     post, norm_warnings = create_post(
         db,
@@ -275,6 +275,8 @@ def create_post_via_link(
         slug=body.slug,
         tags=body.tags,
         excerpt=body.excerpt,
+        actor_id=actor.id,
+        source="link",
     )
 
     data = _post_to_dict(post, site_slug, session=db)
@@ -326,9 +328,9 @@ def publish_post_via_link(
         raise CapabilityTokenError("Malformed capability token.")
 
     site_slug, _ = parsed
-    _actor, _link = _verify_link_auth(token, request, db, required_verb="posts:publish")
+    actor, _link = _verify_link_auth(token, request, db, required_verb="posts:publish")
 
-    post, warnings = publish_post(db, post_id)
+    post, warnings = publish_post(db, post_id, actor_id=actor.id, source="link")
     data = _post_to_dict(post, site_slug, session=db)
     data["warnings"] = warnings
     return data

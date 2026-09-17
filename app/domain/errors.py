@@ -282,6 +282,32 @@ class RequestInProgressError(ConflictError):
         )
 
 
+class RevisionNotFoundError(NotFoundError):
+    code = "revision-not-found"
+    title = "Revision not found"
+
+    def __init__(self, post_id: str, revision: int) -> None:
+        super().__init__(
+            f"No revision {revision} for post '{post_id}'.",
+            hint=(
+                "Use GET /v1/posts/{id}/revisions to list available revisions, "
+                "then request a valid revision number."
+            ),
+            extra={"post_id": post_id, "revision": revision},
+        )
+
+
+class InvalidRevisionError(ConflictError):
+    code = "invalid-revision"
+    title = "Invalid revision"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            detail,
+            hint="Ensure the revision numbers are valid and from_revision != to_revision.",
+        )
+
+
 # --- 503 --------------------------------------------------------------------
 
 

@@ -47,15 +47,29 @@ from app.services.post import (
     MAX_LIMIT,
     _post_to_dict,
     create_post,
+    get_diff,
     get_post,
+    get_revision,
     list_posts,
+    list_revisions,
     publish_post,
+    revert_post,
     trash_post,
     unpublish_post,
     update_post,
 )
 
-from .schemas import PostCreate, PostListResponse, PostRead, PostUpdate
+from .schemas import (
+    DiffResponse,
+    PostCreate,
+    PostListResponse,
+    PostRead,
+    PostUpdate,
+    RevertRequest,
+    RevisionListResponse,
+    RevisionMetadata,
+    RevisionSnapshot,
+)
 
 router = APIRouter()
 
@@ -181,6 +195,7 @@ def create_post_endpoint(
         tags=body.tags,
         excerpt=body.excerpt,
         frontmatter=body.frontmatter,
+        actor_id=auth.actor_id,
     )
 
     data = _post_to_dict(post, site_slug, session=db)
@@ -369,6 +384,7 @@ def update_post_endpoint(
         tags=body.tags,
         excerpt=body.excerpt,
         frontmatter=body.frontmatter,
+        actor_id=auth.actor_id,
     )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
@@ -449,7 +465,7 @@ def publish_post_endpoint(
     if if_match is not None:
         check_if_match(if_match, post_check.content_hash, post_check.revision_count)
 
-    post, warnings = publish_post(db, identifier)
+    post, warnings = publish_post(db, identifier, actor_id=auth.actor_id)
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
     data["warnings"] = warnings
@@ -503,7 +519,7 @@ def unpublish_post_endpoint(
     if if_match is not None:
         check_if_match(if_match, post_check.content_hash, post_check.revision_count)
 
-    post, warnings = unpublish_post(db, identifier)
+    post, warnings = unpublish_post(db, identifier, actor_id=auth.actor_id)
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
     data["warnings"] = warnings
@@ -532,7 +548,136 @@ def trash_post_endpoint(
     if if_match is not None:
         check_if_match(if_match, post_check.content_hash, post_check.revision_count)
 
-    post = trash_post(db, identifier)
+    post = trash_post(db, identifier, actor_id=auth.actor_id)
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
     return data
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/posts/{id}/revisions — list revision metadata
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/posts/{identifier}/revisions",
+    summary="List revisions for a post",
+    tags=["posts"],
+    response_model=RevisionListResponse,
+)
+def list_revisions_endpoint(
+    identifier: str,
+    request: Request,
+    db: DbSession,
+    auth: AuthContext = Depends(require_auth),
+    limit: int = Query(20, ge=1, le=100),
+    cursor: int | None = Query(None, description="Revision number to start after"),
+) -> RevisionListResponse:
+    items, next_cursor = list_revisions(db, identifier, limit=limit, cursor=cursor)
+    metadata = [
+        RevisionMetadata(
+            revision=r.revision,
+            title=r.title,
+            status=r.status,
+            editor_label=r.editor_label,
+            actor_id=str(r.actor_id),
+            source=r.source,
+            created_at=r.created_at,
+            diff_unified=r.diff_unified,
+        )
+        for r in items
+    ]
+    return RevisionListResponse(
+        items=metadata,
+        next_cursor=next_cursor,
+        count=len(metadata),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/posts/{id}/revisions/{n} — full revision snapshot
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/posts/{identifier}/revisions/{revision_num}",
+    summary="Get a revision snapshot",
+    tags=["posts"],
+    response_model=RevisionSnapshot,
+)
+def get_revision_endpoint(
+    identifier: str,
+    revision_num: int,
+    request: Request,
+    db: DbSession,
+    auth: AuthContext = Depends(require_auth),
+) -> RevisionSnapshot:
+    rev = get_revision(db, identifier, revision_num)
+    return RevisionSnapshot(
+        id=str(rev.id),
+        post_id=str(rev.post_id),
+        revision=rev.revision,
+        title=rev.title,
+        body_md=rev.body_md,
+        frontmatter=rev.frontmatter,
+        status=rev.status,
+        editor_label=rev.editor_label,
+        actor_id=str(rev.actor_id),
+        request_id=rev.request_id,
+        source=rev.source,
+        created_at=rev.created_at,
+        diff_unified=rev.diff_unified,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/posts/{id}/diff?from={n}&to={m} — unified diff
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/posts/{identifier}/diff",
+    summary="Get a unified diff between two revisions",
+    tags=["posts"],
+    response_model=DiffResponse,
+)
+def get_diff_endpoint(
+    identifier: str,
+    request: Request,
+    db: DbSession,
+    auth: AuthContext = Depends(require_auth),
+    from_rev: int = Query(..., alias="from", description="Source revision number"),
+    to_rev: int = Query(..., alias="to", description="Target revision number"),
+) -> DiffResponse:
+    result = get_diff(db, identifier, from_rev, to_rev)
+    return DiffResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/posts/{id}/revert — revert to a previous revision
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/posts/{identifier}/revert",
+    summary="Revert a post to a previous revision",
+    tags=["posts"],
+    response_model=PostRead,
+)
+def revert_post_endpoint(
+    identifier: str,
+    body: RevertRequest,
+    request: Request,
+    db: DbSession,
+    auth: AuthContext = Depends(require_auth),
+) -> Response:
+    post = revert_post(
+        db,
+        identifier,
+        target_revision=body.revision,
+        actor_id=auth.actor_id,
+        reason=body.reason,
+    )
+    site_slug = post.site.slug if post.site else "blog"
+    data = _post_to_dict(post, site_slug, session=db)
+    return _negotiate_response(request, data)
