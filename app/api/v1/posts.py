@@ -1,4 +1,4 @@
-"""Post CRUD endpoints (#4).
+"""Post CRUD endpoints (#4, extended by #5).
 
 Implements the full create -> update -> publish -> read -> unpublish -> trash
 cycle for posts.  All responses carry ``id``, ``slug``, ``status``, ``url``,
@@ -18,6 +18,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
+from app.auth import AuthContext, require_auth
 from app.db.session import get_db
 from app.services.post import (
     DEFAULT_LIMIT,
@@ -56,6 +57,7 @@ def create_post_endpoint(
     body: PostCreate,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
     dry_run: bool = Query(False, description="Validate but don't persist"),
 ) -> Response:
     if dry_run:
@@ -106,6 +108,7 @@ def list_posts_endpoint(
     site_slug: str,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
     status: str | None = Query(None, description="Filter by status"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     cursor: str | None = Query(None),
@@ -141,6 +144,7 @@ def get_post_endpoint(
     identifier: str,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
 ) -> PostRead:
     post = get_post(db, identifier)
     site_slug = post.site.slug if post.site else "blog"
@@ -164,6 +168,7 @@ def update_post_endpoint(
     body: PostUpdate,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
     dry_run: bool = Query(False, description="Validate but don't persist"),
 ) -> PostRead:
     if dry_run:
@@ -201,6 +206,7 @@ def publish_post_endpoint(
     identifier: str,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     post, warnings = publish_post(db, identifier)
     site_slug = post.site.slug if post.site else "blog"
@@ -223,6 +229,7 @@ def unpublish_post_endpoint(
     identifier: str,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     post, warnings = unpublish_post(db, identifier)
     site_slug = post.site.slug if post.site else "blog"
@@ -245,6 +252,7 @@ def trash_post_endpoint(
     identifier: str,
     request: Request,
     db: DbSession,
+    auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     post = trash_post(db, identifier)
     site_slug = post.site.slug if post.site else "blog"

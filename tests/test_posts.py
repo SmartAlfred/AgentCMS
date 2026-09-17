@@ -1,4 +1,4 @@
-"""Contract tests for the Post CRUD API (#4).
+"""Contract tests for the Post CRUD API (#4, extended by #5).
 
 Exercises the full create -> update -> publish -> read -> unpublish -> trash
 cycle with ``curl``-equivalent HTTP calls.  Also asserts field names match the
@@ -47,13 +47,14 @@ def _create_site(session: Session, slug: str = SITE_SLUG) -> Site:
 class TestPostCRUDCycle:
     """Full create -> update -> publish -> read -> unpublish -> trash cycle."""
 
-    def test_full_cycle(self, client: TestClient, db: Session) -> None:
+    def test_full_cycle(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
 
         # 1. Create
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# My First Post\n\nHello world."},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         assert resp.headers["location"]
@@ -72,12 +73,12 @@ class TestPostCRUDCycle:
         assert "updated_at" in data
 
         # 2. Read (by id)
-        resp = client.get(f"/v1/posts/{post_id}")
+        resp = client.get(f"/v1/posts/{post_id}", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.json()["id"] == post_id
 
         # 3. Read (by slug)
-        resp = client.get("/v1/posts/my-first-post")
+        resp = client.get("/v1/posts/my-first-post", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.json()["id"] == post_id
 
@@ -85,6 +86,7 @@ class TestPostCRUDCycle:
         resp = client.patch(
             f"/v1/posts/{post_id}",
             json={"title": "Updated Title", "body_md": "# Updated\n\nNew content."},
+            headers=auth_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -92,26 +94,26 @@ class TestPostCRUDCycle:
         assert data["revision"] == 2
 
         # 5. Publish
-        resp = client.post(f"/v1/posts/{post_id}/publish")
+        resp = client.post(f"/v1/posts/{post_id}/publish", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "published"
         assert data["published_at"] is not None
 
         # 6. Unpublish
-        resp = client.post(f"/v1/posts/{post_id}/unpublish")
+        resp = client.post(f"/v1/posts/{post_id}/unpublish", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "draft"
 
         # 7. Trash
-        resp = client.delete(f"/v1/posts/{post_id}")
+        resp = client.delete(f"/v1/posts/{post_id}", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "trashed"
 
         # 8. Verify trashed post is gone from list
-        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts")
+        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.json()["count"] == 0
 
@@ -124,11 +126,14 @@ class TestPostCRUDCycle:
 class TestLocationHeader:
     """201 responses carry a Location header with the canonical URL."""
 
-    def test_create_returns_location(self, client: TestClient, db: Session) -> None:
+    def test_create_returns_location(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Test"},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         assert "location" in resp.headers
@@ -161,48 +166,60 @@ class TestContractFieldNames:
         "site_id",
     }
 
-    def test_create_response_fields(self, client: TestClient, db: Session) -> None:
+    def test_create_response_fields(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Hello\n\nWorld"},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         data = resp.json()
         missing = self.EXPECTED_FIELDS - set(data.keys())
         assert not missing, f"Missing fields in response: {missing}"
 
-    def test_read_response_fields(self, client: TestClient, db: Session) -> None:
+    def test_read_response_fields(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Hello\n\nWorld"},
+            headers=auth_headers,
         )
         post_id = resp.json()["id"]
-        resp = client.get(f"/v1/posts/{post_id}")
+        resp = client.get(f"/v1/posts/{post_id}", headers=auth_headers)
         data = resp.json()
         missing = self.EXPECTED_FIELDS - set(data.keys())
         assert not missing, f"Missing fields in response: {missing}"
 
-    def test_update_response_fields(self, client: TestClient, db: Session) -> None:
+    def test_update_response_fields(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Hello\n\nWorld"},
+            headers=auth_headers,
         )
         post_id = resp.json()["id"]
-        resp = client.patch(f"/v1/posts/{post_id}", json={"title": "New"})
+        resp = client.patch(f"/v1/posts/{post_id}", json={"title": "New"}, headers=auth_headers)
         data = resp.json()
         missing = self.EXPECTED_FIELDS - set(data.keys())
         assert not missing, f"Missing fields in response: {missing}"
 
-    def test_list_response_fields(self, client: TestClient, db: Session) -> None:
+    def test_list_response_fields(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Hello"},
+            headers=auth_headers,
         )
-        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts")
+        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts", headers=auth_headers)
         data = resp.json()
         assert "items" in data
         assert "next_cursor" in data
@@ -221,20 +238,26 @@ class TestContractFieldNames:
 class TestCreateIgnoresStatus:
     """POST …/posts always returns draft; status in body is ignored."""
 
-    def test_status_ignored_on_create(self, client: TestClient, db: Session) -> None:
+    def test_status_ignored_on_create(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Test", "status": "published"},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         assert resp.json()["status"] == "draft"
 
-    def test_status_ignored_with_warning(self, client: TestClient, db: Session) -> None:
+    def test_status_ignored_with_warning(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Test", "status": "published"},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         assert resp.json()["status"] == "draft"
@@ -248,22 +271,28 @@ class TestCreateIgnoresStatus:
 class TestTitleDerivation:
     """Title may be omitted — derived from first # H1 in body_md."""
 
-    def test_title_derived_from_h1(self, client: TestClient, db: Session) -> None:
+    def test_title_derived_from_h1(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# My Great Title\n\nSome content."},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["title"] == "My Great Title"
         assert data["slug"] == "my-great-title"
 
-    def test_title_required_when_no_h1(self, client: TestClient, db: Session) -> None:
+    def test_title_required_when_no_h1(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "No heading here."},
+            headers=auth_headers,
         )
         assert resp.status_code == 422
         assert resp.headers["content-type"] == "application/problem+json"
@@ -278,15 +307,19 @@ class TestTitleDerivation:
 class TestSlugConflict:
     """Duplicate slug returns 409 with suggested_slug."""
 
-    def test_slug_conflict_returns_suggested(self, client: TestClient, db: Session) -> None:
+    def test_slug_conflict_returns_suggested(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# First", "slug": "my-post"},
+            headers=auth_headers,
         )
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Second", "slug": "my-post"},
+            headers=auth_headers,
         )
         assert resp.status_code == 409
         data = resp.json()
@@ -303,20 +336,23 @@ class TestSlugConflict:
 class TestIdempotentPublish:
     """Publishing a post twice returns 200 with warnings[], not an error."""
 
-    def test_double_publish_returns_200_with_warnings(self, client: TestClient, db: Session) -> None:
+    def test_double_publish_returns_200_with_warnings(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Post"},
+            headers=auth_headers,
         )
         post_id = resp.json()["id"]
 
         # Publish once
-        resp = client.post(f"/v1/posts/{post_id}/publish")
+        resp = client.post(f"/v1/posts/{post_id}/publish", headers=auth_headers)
         assert resp.status_code == 200
 
         # Publish again — should be idempotent
-        resp = client.post(f"/v1/posts/{post_id}/publish")
+        resp = client.post(f"/v1/posts/{post_id}/publish", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "published"
@@ -331,25 +367,27 @@ class TestIdempotentPublish:
 class TestDryRun:
     """?dry_run=true is accepted on create and update and doesn't persist."""
 
-    def test_dry_run_create(self, client: TestClient, db: Session) -> None:
+    def test_dry_run_create(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Draft"},
             params={"dry_run": True},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         assert resp.json().get("dry_run") is True
 
         # Verify nothing was persisted
-        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts")
+        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts", headers=auth_headers)
         assert resp.json()["count"] == 0
 
-    def test_dry_run_update(self, client: TestClient, db: Session) -> None:
+    def test_dry_run_update(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Real"},
+            headers=auth_headers,
         )
         post_id = resp.json()["id"]
 
@@ -357,11 +395,12 @@ class TestDryRun:
             f"/v1/posts/{post_id}",
             json={"title": "Changed"},
             params={"dry_run": True},
+            headers=auth_headers,
         )
         assert resp.status_code == 200
 
         # Verify title wasn't changed
-        resp = client.get(f"/v1/posts/{post_id}")
+        resp = client.get(f"/v1/posts/{post_id}", headers=auth_headers)
         assert resp.json()["title"] == "Real"
 
 
@@ -373,15 +412,16 @@ class TestDryRun:
 class TestCursorPagination:
     """Listing uses cursor pagination with next_cursor."""
 
-    def test_pagination_basic(self, client: TestClient, db: Session) -> None:
+    def test_pagination_basic(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
         for i in range(5):
             client.post(
                 f"/v1/sites/{SITE_SLUG}/posts",
                 json={"body_md": f"# Post {i}"},
+                headers=auth_headers,
             )
 
-        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts", params={"limit": 2})
+        resp = client.get(f"/v1/sites/{SITE_SLUG}/posts", params={"limit": 2}, headers=auth_headers)
         data = resp.json()
         assert data["count"] == 2
         assert data["next_cursor"] is not None
@@ -390,6 +430,7 @@ class TestCursorPagination:
         resp = client.get(
             f"/v1/sites/{SITE_SLUG}/posts",
             params={"limit": 2, "cursor": data["next_cursor"]},
+            headers=auth_headers,
         )
         data2 = resp.json()
         assert data2["count"] == 2
@@ -407,20 +448,26 @@ class TestCursorPagination:
 class TestContentRequired:
     """body_md is the only required field on create."""
 
-    def test_empty_body_md_rejected(self, client: TestClient, db: Session) -> None:
+    def test_empty_body_md_rejected(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": ""},
+            headers=auth_headers,
         )
         assert resp.status_code == 422
         assert resp.json()["code"] == "content-required"
 
-    def test_missing_body_md_rejected(self, client: TestClient, db: Session) -> None:
+    def test_missing_body_md_rejected(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={},
+            headers=auth_headers,
         )
         assert resp.status_code == 422
 
@@ -433,19 +480,22 @@ class TestContentRequired:
 class TestTrashPreservesRevisions:
     """Trashing a post doesn't destroy its revisions."""
 
-    def test_trash_preserves_revisions(self, client: TestClient, db: Session) -> None:
+    def test_trash_preserves_revisions(
+        self, client: TestClient, db: Session, auth_headers: dict[str, str]
+    ) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Post"},
+            headers=auth_headers,
         )
         post_id = resp.json()["id"]
 
         # Update to create a revision
-        client.patch(f"/v1/posts/{post_id}", json={"title": "Updated"})
+        client.patch(f"/v1/posts/{post_id}", json={"title": "Updated"}, headers=auth_headers)
 
         # Trash
-        client.delete(f"/v1/posts/{post_id}")
+        client.delete(f"/v1/posts/{post_id}", headers=auth_headers)
 
         # Check revisions still exist (create + update + trash = 3)
         revisions = db.query(PostRevision).filter(PostRevision.post_id == uuid.UUID(post_id)).all()
@@ -460,10 +510,11 @@ class TestTrashPreservesRevisions:
 class TestSiteNotFound:
     """Creating a post in a non-existent site returns 404."""
 
-    def test_site_not_found(self, client: TestClient, db: Session) -> None:
+    def test_site_not_found(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         resp = client.post(
             "/v1/sites/nope/posts",
             json={"body_md": "# Post"},
+            headers=auth_headers,
         )
         assert resp.status_code == 404
         assert resp.json()["code"] == "site-not-found"
@@ -477,8 +528,8 @@ class TestSiteNotFound:
 class TestPostNotFound:
     """Reading a non-existent post returns 404."""
 
-    def test_post_not_found(self, client: TestClient, db: Session) -> None:
-        resp = client.get("/v1/posts/nonexistent")
+    def test_post_not_found(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
+        resp = client.get("/v1/posts/nonexistent", headers=auth_headers)
         assert resp.status_code == 404
         assert resp.json()["code"] == "post-not-found"
 
@@ -491,15 +542,16 @@ class TestPostNotFound:
 class TestInvalidTransitions:
     """Invalid status transitions return 409 with allowed_from."""
 
-    def test_unpublish_draft(self, client: TestClient, db: Session) -> None:
+    def test_unpublish_draft(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Draft"},
+            headers=auth_headers,
         )
         post_id = resp.json()["id"]
 
-        resp = client.post(f"/v1/posts/{post_id}/unpublish")
+        resp = client.post(f"/v1/posts/{post_id}/unpublish", headers=auth_headers)
         assert resp.status_code == 409
         assert resp.json()["code"] == "invalid-transition"
         assert "allowed_from" in resp.json()
@@ -513,11 +565,12 @@ class TestInvalidTransitions:
 class TestTags:
     """Tags are created and returned with posts."""
 
-    def test_create_with_tags(self, client: TestClient, db: Session) -> None:
+    def test_create_with_tags(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Post", "tags": ["python", "fastapi"]},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         assert set(resp.json()["tags"]) == {"python", "fastapi"}
@@ -531,12 +584,13 @@ class TestTags:
 class TestDryRunResponseShape:
     """dry_run response contains expected fields."""
 
-    def test_dry_run_shape(self, client: TestClient, db: Session) -> None:
+    def test_dry_run_shape(self, client: TestClient, db: Session, auth_headers: dict[str, str]) -> None:
         _create_site(db)
         resp = client.post(
             f"/v1/sites/{SITE_SLUG}/posts",
             json={"body_md": "# Test"},
             params={"dry_run": True},
+            headers=auth_headers,
         )
         assert resp.status_code == 201
         data = resp.json()

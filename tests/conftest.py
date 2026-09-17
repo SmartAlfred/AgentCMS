@@ -1,4 +1,4 @@
-"""Shared fixtures (#2).
+"""Shared fixtures (#2, extended by #5).
 
 The suite runs against a throwaway PostgreSQL server: the whole server is
 created for the session and destroyed afterwards, and each test starts from an
@@ -114,6 +114,68 @@ def client(db: Session, app) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         test_client.headers.update({"User-Agent": "agentcms-tests/1.0"})
         yield test_client
+
+
+@pytest.fixture()
+def auth_headers(db: Session) -> dict[str, str]:
+    """Create a test token with full scopes and return Authorization headers."""
+    from app.models.actor import Actor
+    from app.models.capability_link import CapabilityLink
+    from app.services.tokens import generate_token
+
+    actor = Actor(
+        id=uuid.uuid4(),
+        kind="machine",
+        label="test-token",
+        scopes=["posts:read", "posts:write", "posts:publish"],
+    )
+    db.add(actor)
+    db.flush()
+
+    plaintext, token_hash = generate_token(actor.id)
+    link = CapabilityLink(
+        id=uuid.uuid4(),
+        actor_id=actor.id,
+        token_hash=token_hash,
+        label="test-token",
+        path_scope="/",
+        verbs=["GET", "POST", "PATCH", "DELETE"],
+    )
+    db.add(link)
+    db.commit()
+
+    return {"Authorization": f"Bearer {plaintext}"}
+
+
+@pytest.fixture()
+def read_only_auth_headers(db: Session) -> dict[str, str]:
+    """Create a read-only test token and return Authorization headers."""
+    from app.models.actor import Actor
+    from app.models.capability_link import CapabilityLink
+    from app.services.tokens import generate_token
+
+    actor = Actor(
+        id=uuid.uuid4(),
+        kind="machine",
+        label="read-only-token",
+        scopes=["posts:read"],
+    )
+    db.add(actor)
+    db.flush()
+
+    plaintext, token_hash = generate_token(actor.id)
+    link = CapabilityLink(
+        id=uuid.uuid4(),
+        actor_id=actor.id,
+        token_hash=token_hash,
+        label="read-only-token",
+        path_scope="/",
+        verbs=["GET"],
+    )
+    db.add(link)
+    db.commit()
+
+    return {"Authorization": f"Bearer {plaintext}"}
 
 
 @pytest.fixture()
