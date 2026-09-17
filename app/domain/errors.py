@@ -228,6 +228,60 @@ class SlugInvalidError(UnprocessableContentError):
         )
 
 
+# --- 412 Precondition Failed ------------------------------------------------
+
+
+class PreconditionFailedError(DomainError):
+    """Raised when If-Match ETag does not match the current revision (#11)."""
+
+    status_code = 412
+    code = "precondition-failed"
+    title = "Precondition failed"
+
+    def __init__(self, current_etag: str, current_revision: int) -> None:
+        super().__init__(
+            f"If-Match ETag does not match the current revision ({current_revision}).",
+            hint=(
+                "Re-read the post, re-apply your change, retry with the new ETag. "
+                "GET /v1/posts/{id} returns the current ETag in the response header."
+            ),
+            extra={
+                "current_etag": current_etag,
+                "current_revision": current_revision,
+            },
+        )
+
+
+# --- 409 Idempotency conflicts ------------------------------------------------
+
+
+class IdempotencyKeyReusedError(ConflictError):
+    """Raised when the same idempotency key is reused with a different body (#11)."""
+
+    code = "idempotency-key-reused"
+    title = "Idempotency key reused with different payload"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This idempotency key has already been used with a different request body.",
+            hint="Use a new idempotency key for a different request.",
+        )
+
+
+class RequestInProgressError(ConflictError):
+    """Raised when a request with the same idempotency key is already in flight (#11)."""
+
+    code = "request-in-progress"
+    title = "Request in progress"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "A request with this idempotency key is currently being processed.",
+            hint="Wait and retry.",
+            headers={"Retry-After": "1"},
+        )
+
+
 # --- 503 --------------------------------------------------------------------
 
 
