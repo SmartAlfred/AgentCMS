@@ -68,8 +68,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
-    from app.middleware import RequestContextMiddleware
+    from app.middleware import BodySizeLimitMiddleware, RateLimitHeadersMiddleware, RequestContextMiddleware
 
+    # Order matters: outermost middleware runs first on request, last on response.
+    # 1. Body size limit — reject cheaply before buffering
+    app.add_middleware(BodySizeLimitMiddleware)
+    # 2. Rate limit headers — attach X-RateLimit-* to every response
+    app.add_middleware(RateLimitHeadersMiddleware)
+    # 3. Request context — request id, logging
     app.add_middleware(RequestContextMiddleware)
     if settings.cors_origins:
         app.add_middleware(
@@ -130,10 +136,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 def register_v1_routes(app: FastAPI) -> None:
     """Mount the versioned content API (implemented in #4, #5, #6)."""
 
+    from app.api.admin_rate_limits import router as admin_rl_router
     from app.api.v1.capability_links import router as cap_router
     from app.api.v1.routes import router as v1_router
 
     app.include_router(v1_router, prefix="/v1")
+    app.include_router(admin_rl_router)
     app.include_router(cap_router)
 
 

@@ -103,8 +103,28 @@ All errors are `application/problem+json` (RFC 9457):
 ## Limits
 
 * Body size: 256 KB max.
-* Rate limit: 30 writes/min per token.
+* Rate limit: 30 writes/min per token, 5 publishes/min per token.
+* Reads: 600/min per token, 300/min per unauthenticated IP.
+* Daily quotas: 500 writes/day, 50 publishes/day per token.
+* Capability links: 10 writes/min, 50 writes/day (lower because links can leak).
 * Posts are soft-deleted; undo within 60 s via `POST …/unpublish`.
+
+## Backoff and retry
+
+Every response includes rate-limit headers:
+
+    X-RateLimit-Limit: 30
+    X-RateLimit-Remaining: 0
+    X-RateLimit-Reset: 1726650060
+    X-RateLimit-Bucket: writes
+
+If you receive a `429` response:
+
+1. Read the `Retry-After` header — wait at least that many seconds.
+2. Use **exponential backoff with jitter**: wait 1s, 2s, 4s, 8s + random jitter.
+3. Retry the same request (your `Idempotency-Key` is preserved).
+4. Never retry `4xx` errors (except `429` and `503`).
+5. Always retry `5xx` errors with backoff.
 
 ## Undo / revert
 

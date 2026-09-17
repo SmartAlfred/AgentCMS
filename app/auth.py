@@ -1,8 +1,13 @@
-"""Auth dependency (#5, extended by #6): extract and verify Bearer tokens on /v1/* routes.
+"""Auth dependency (#5, extended by #6, #14): extract and verify Bearer tokens on /v1/* routes.
 
 Supports two token families:
 * ``acms_*`` — standard API tokens (from #5)
 * ``cap_*`` — capability tokens for link-only agents (from #6)
+
+Rate limiting (#14):
+After successful auth, the dependency checks per-token rate limits
+and stores the result on ``request.state.rate_limit_result`` so the
+``RateLimitHeadersMiddleware`` can attach ``X-RateLimit-*`` headers.
 
 Usage in endpoints::
 
@@ -74,7 +79,11 @@ async def require_auth(
 
     Raises 401 if the token is missing, malformed, unknown, expired or revoked.
     Raises 403 if the token lacks the required scope for this endpoint.
+    Raises 429 if rate-limited (#14).
+    Raises 423 if writes are paused by a kill switch (#14).
     """
+    from app.services.kill_switch import check_write_allowed
+    from app.services.rate_limiter import check_token_rate_limit
     from app.services.tokens import scope_for_endpoint
 
     # Try standard acms_ token first
@@ -99,7 +108,7 @@ async def require_auth(
             request.url.path,
         )
 
-        return AuthContext(
+        auth_ctx = AuthContext(
             actor=actor,
             link=link,
             actor_id=actor.id,
@@ -107,6 +116,43 @@ async def require_auth(
             scopes=list(actor.scopes or []),
             site_id=actor.site_id,
         )
+
+        # --- Rate limiting (#14) ---
+        bucket = _bucket_for_request(request.method, request.url.path)
+        rl_result = check_token_rate_limit(db, actor.id.hex, bucket=bucket)
+        request.state.rate_limit_result = rl_result
+        if not rl_result.allowed:
+            from app.domain.errors import DomainError
+
+            class _RateLimited(DomainError):
+                status_code = 429
+                code = "rate-limited"
+                title = "Rate limit exceeded"
+
+            raise _RateLimited(
+                f"Rate limit exceeded for bucket '{bucket}'.",
+                hint=(
+                    f"Wait {rl_result.retry_after}s then retry the same request; "
+                    f"your Idempotency-Key is preserved."
+                ),
+                headers={
+                    "Retry-After": str(rl_result.retry_after or 60),
+                    "X-RateLimit-Bucket": bucket,
+                },
+                extra={
+                    "bucket": bucket,
+                    "limit": rl_result.limit,
+                    "remaining": rl_result.remaining,
+                    "reset": rl_result.reset_epoch,
+                },
+            )
+
+        # --- Kill switch (#14) ---
+        if bucket in ("writes", "publish"):
+            site_slug = _extract_site_slug(request.url.path, db)
+            check_write_allowed(actor_id=actor.id.hex, site_slug=site_slug)
+
+        return auth_ctx
 
     # Try capability token (cap_)
     cap_plaintext = _extract_cap_bearer(authorization)
@@ -130,6 +176,8 @@ def _verify_capability_auth(
         check_rate_limit,
         verify_capability_token,
     )
+    from app.services.kill_switch import check_write_allowed
+    from app.services.rate_limiter import check_capability_link_rate_limit
     from app.services.tokens import scope_for_endpoint
 
     required_scope = scope_for_endpoint(request.method, request.url.path)
@@ -152,8 +200,74 @@ def _verify_capability_auth(
         required_site_slug=site_slug,
     )
 
-    # Rate limit per link
+    # Rate limit per link (legacy in-memory limiter from capability_tokens)
     check_rate_limit(db, link)
+
+    # --- Rate limiting (#14) — capability link bucket ---
+    bucket = _bucket_for_request(request.method, request.url.path)
+    if bucket in ("writes", "publish"):
+        rl_result = check_capability_link_rate_limit(db, link.id.hex)
+        request.state.rate_limit_result = rl_result
+        if not rl_result.allowed:
+            from app.domain.errors import DomainError
+
+            class _RateLimited(DomainError):
+                status_code = 429
+                code = "rate-limited"
+                title = "Rate limit exceeded"
+
+            raise _RateLimited(
+                f"Rate limit exceeded for capability link in bucket '{bucket}'.",
+                hint=(
+                    f"Wait {rl_result.retry_after}s then retry the same request; "
+                    f"your Idempotency-Key is preserved."
+                ),
+                headers={
+                    "Retry-After": str(rl_result.retry_after or 60),
+                    "X-RateLimit-Bucket": bucket,
+                },
+                extra={
+                    "bucket": bucket,
+                    "limit": rl_result.limit,
+                    "remaining": rl_result.remaining,
+                    "reset": rl_result.reset_epoch,
+                },
+            )
+    else:
+        # Reads bucket for capability links — use token-level read limit
+        from app.services.rate_limiter import check_token_rate_limit
+
+        rl_result = check_token_rate_limit(db, actor.id.hex, bucket=bucket)
+        request.state.rate_limit_result = rl_result
+        if not rl_result.allowed:
+            from app.domain.errors import DomainError
+
+            class _RateLimitedRead(DomainError):
+                status_code = 429
+                code = "rate-limited"
+                title = "Rate limit exceeded"
+
+            raise _RateLimitedRead(
+                f"Rate limit exceeded for bucket '{bucket}'.",
+                hint=(
+                    f"Wait {rl_result.retry_after}s then retry the same request; "
+                    f"your Idempotency-Key is preserved."
+                ),
+                headers={
+                    "Retry-After": str(rl_result.retry_after or 60),
+                    "X-RateLimit-Bucket": bucket,
+                },
+                extra={
+                    "bucket": bucket,
+                    "limit": rl_result.limit,
+                    "remaining": rl_result.remaining,
+                    "reset": rl_result.reset_epoch,
+                },
+            )
+
+    # --- Kill switch (#14) ---
+    if bucket in ("writes", "publish"):
+        check_write_allowed(link_id=link.id.hex, site_slug=site_slug)
 
     logger.info(
         "authenticated capability link %s (%s) on %s %s",
@@ -193,3 +307,20 @@ def _extract_site_slug(path: str, db: Session) -> str | None:
     if match:
         return match.group(1)
     return None
+
+
+def _bucket_for_request(method: str, path: str) -> str:
+    """Determine the rate-limit bucket for a request.
+
+    Returns 'reads', 'writes', or 'publish'.
+    """
+    method_upper = method.upper()
+    if method_upper == "GET":
+        return "reads"
+    if method_upper == "HEAD" or method_upper == "OPTIONS":
+        return "reads"
+    # Publish/unpublish are special writes
+    if "/publish" in path or "/unpublish" in path:
+        return "publish"
+    # All other mutating methods are writes
+    return "writes"
