@@ -267,7 +267,7 @@ def create_post_via_link(
     site_slug, _ = parsed
     _actor, _link = _verify_link_auth(token, request, db, required_verb="posts:write")
 
-    post = create_post(
+    post, norm_warnings = create_post(
         db,
         site_slug,
         body_md=body.body_md,
@@ -278,7 +278,7 @@ def create_post_via_link(
     )
 
     data = _post_to_dict(post, site_slug, session=db)
-    data["warnings"] = []
+    data["warnings"] = list(norm_warnings)
     if body.title is None:
         data["warnings"].append("Title was derived from the first H1 in body_md.")
     if body.slug is None:

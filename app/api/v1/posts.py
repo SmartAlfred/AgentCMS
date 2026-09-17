@@ -1,4 +1,4 @@
-"""Post CRUD endpoints (#4, extended by #5).
+"""Post CRUD endpoints (#4, extended by #5, #7).
 
 Implements the full create -> update -> publish -> read -> unpublish -> trash
 cycle for posts.  All responses carry ``id``, ``slug``, ``status``, ``url``,
@@ -9,6 +9,11 @@ Design invariants:
 * ``POST …/posts/{id}/publish`` is idempotent — double-publish returns 200
   with a ``warnings[]`` entry, not an error.
 * ``?dry_run=true`` is accepted on create/update and simply doesn't persist.
+
+Content negotiation (Accept header):
+* ``application/json`` (default) — full post object
+* ``text/markdown`` — raw ``body_md`` only
+* ``text/html`` — rendered HTML fragment
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, require_auth
 from app.db.session import get_db
+from app.services.markdown import MarkdownRenderer
 from app.services.post import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -38,6 +44,45 @@ from .schemas import PostCreate, PostListResponse, PostRead, PostUpdate
 router = APIRouter()
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+def _negotiate_response(
+    request: Request,
+    post_data: dict[str, Any],
+    *,
+    body_html: str | None = None,
+    status_code: int = 200,
+    headers: dict[str, str] | None = None,
+) -> Response:
+    """Return the appropriate representation based on the Accept header."""
+    accept = request.headers.get("accept", "application/json")
+    resp_headers = dict(headers) if headers else {}
+
+    if "text/markdown" in accept:
+        return Response(
+            content=post_data.get("body_md", ""),
+            status_code=status_code,
+            media_type="text/markdown; charset=utf-8",
+            headers=resp_headers,
+        )
+    if "text/html" in accept:
+        html_content = body_html or ""
+        if not html_content and post_data.get("body_md"):
+            renderer = MarkdownRenderer()
+            html_content = renderer.render_html(post_data["body_md"])
+        return Response(
+            content=html_content,
+            status_code=status_code,
+            media_type="text/html; charset=utf-8",
+            headers=resp_headers,
+        )
+    # Default: application/json
+    return Response(
+        content=PostRead(**post_data).model_dump_json(),
+        status_code=status_code,
+        media_type="application/json",
+        headers=resp_headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +112,7 @@ def create_post_endpoint(
             media_type="application/json",
         )
 
-    post = create_post(
+    post, norm_warnings = create_post(
         db,
         site_slug,
         body_md=body.body_md,
@@ -79,16 +124,22 @@ def create_post_endpoint(
     )
 
     data = _post_to_dict(post, site_slug, session=db)
-    data["warnings"] = []
+    warnings: list[str] = list(norm_warnings)
     if body.title is None:
-        data["warnings"].append("Title was derived from the first H1 in body_md.")
+        warnings.append("Title was derived from the first H1 in body_md.")
     if body.slug is None:
-        data["warnings"].append("Slug was derived from the title.")
+        warnings.append("Slug was derived from the title.")
+    data["warnings"] = warnings
 
-    return Response(
+    # Render HTML for content negotiation
+    renderer = MarkdownRenderer()
+    body_html = renderer.render_html(post.body_md)
+
+    return _negotiate_response(
+        request,
+        data,
+        body_html=body_html,
         status_code=201,
-        content=PostRead(**data).model_dump_json(),
-        media_type="application/json",
         headers={"Location": f"/v1/posts/{post.id}"},
     )
 
@@ -145,11 +196,15 @@ def get_post_endpoint(
     request: Request,
     db: DbSession,
     auth: AuthContext = Depends(require_auth),
-) -> PostRead:
+) -> Response:
     post = get_post(db, identifier)
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
-    return PostRead(**data)
+
+    renderer = MarkdownRenderer()
+    body_html = renderer.render_html(post.body_md)
+
+    return _negotiate_response(request, data, body_html=body_html)
 
 
 # ---------------------------------------------------------------------------
@@ -170,14 +225,16 @@ def update_post_endpoint(
     db: DbSession,
     auth: AuthContext = Depends(require_auth),
     dry_run: bool = Query(False, description="Validate but don't persist"),
-) -> PostRead:
+) -> Response:
     if dry_run:
         post = get_post(db, identifier)
         site_slug = post.site.slug if post.site else "blog"
         data = _post_to_dict(post, site_slug, session=db)
-        return PostRead(**data)
+        renderer = MarkdownRenderer()
+        body_html = renderer.render_html(post.body_md)
+        return _negotiate_response(request, data, body_html=body_html)
 
-    post = update_post(
+    post, norm_warnings = update_post(
         db,
         identifier,
         title=body.title,
@@ -189,7 +246,13 @@ def update_post_endpoint(
     )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
-    return PostRead(**data)
+    if norm_warnings:
+        data["warnings"] = norm_warnings
+
+    renderer = MarkdownRenderer()
+    body_html = renderer.render_html(post.body_md)
+
+    return _negotiate_response(request, data, body_html=body_html)
 
 
 # ---------------------------------------------------------------------------

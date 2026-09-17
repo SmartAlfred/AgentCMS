@@ -38,6 +38,13 @@ from app.models.post import Post
 from app.models.post_revision import PostRevision
 from app.models.site import Site
 from app.models.tag import PostTag, Tag
+from app.services.markdown import (
+    compute_content_hash,
+    compute_excerpt,
+    compute_reading_time_minutes,
+    compute_word_count,
+    normalise_body,
+)
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TITLE_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
@@ -154,6 +161,9 @@ def _post_to_dict(post: Post, site_slug: str, *, session: Session | None = None)
         "created_at": post.created_at,
         "updated_at": post.updated_at,
         "published_at": post.published_at,
+        "word_count": post.word_count,
+        "reading_time_minutes": post.reading_time_minutes,
+        "content_hash": post.content_hash,
     }
 
 
@@ -172,19 +182,32 @@ def create_post(
     tags: list[str] | None = None,
     excerpt: str | None = None,
     frontmatter: dict[str, Any] | None = None,
-) -> Post:
+) -> tuple[Post, list[str]]:
     """Create a new post in draft status.
 
     ``status`` is **never** read from user input — the post is always draft.
+    Returns ``(post, warnings)`` where warnings include markdown normalisation notes.
     """
     if not body_md or not body_md.strip():
         raise ContentRequiredError("Document body required — body_md is the only required field.")
+
+    # Normalise body_md (line endings, whitespace, trailing newline, H1 demotion, smart quotes)
+    normalised_body, norm_warnings = normalise_body(body_md)
+
+    # Compute derived fields
+    content_hash = compute_content_hash(normalised_body)
+    word_count = compute_word_count(normalised_body)
+    reading_time_minutes = compute_reading_time_minutes(normalised_body)
+    derived_excerpt = compute_excerpt(normalised_body)
+
+    # Use caller-provided excerpt if given, otherwise use derived
+    final_excerpt = excerpt if excerpt is not None else derived_excerpt
 
     site = _resolve_site(session, site_slug)
 
     # Derive title from first H1 if not supplied
     if title is None or not title.strip():
-        derived = _derive_title(body_md)
+        derived = _derive_title(normalised_body)
         if derived is None:
             raise TitleRequiredError()
         title = derived
@@ -215,11 +238,13 @@ def create_post(
         site_id=site.id,
         slug=slug,
         title=title,
-        body_md=body_md,
-        excerpt=excerpt,
+        body_md=normalised_body,
+        excerpt=final_excerpt,
         status="draft",
         frontmatter=frontmatter or {},
-        content_hash=_make_content_hash(body_md),
+        content_hash=content_hash,
+        word_count=word_count,
+        reading_time_minutes=reading_time_minutes,
         revision_count=0,
     )
     session.add(post)
@@ -235,7 +260,7 @@ def create_post(
         _sync_tags(session, post, tags)
 
     session.commit()
-    return post
+    return post, norm_warnings
 
 
 # ---------------------------------------------------------------------------
@@ -332,9 +357,12 @@ def update_post(
     tags: list[str] | None = None,
     excerpt: str | None = None,
     frontmatter: dict[str, Any] | None = None,
-) -> Post:
-    """Partially update a post.  Creates a revision snapshot."""
+) -> tuple[Post, list[str]]:
+    """Partially update a post.  Creates a revision snapshot.
+    Returns ``(post, warnings)`` where warnings include markdown normalisation notes.
+    """
     post = _resolve_post(session, post_id)
+    warnings: list[str] = []
 
     if post.status == "trashed":
         raise InvalidTransitionError(
@@ -348,9 +376,21 @@ def update_post(
     if body_md is not None:
         if not body_md.strip():
             raise ContentRequiredError("Document body required — body_md is the only required field.")
-        post.body_md = body_md
-        post.content_hash = _make_content_hash(body_md)
-        changed = True
+        # Normalise body_md
+        normalised_body, norm_warnings = normalise_body(body_md)
+        warnings.extend(norm_warnings)
+
+        # Recompute derived fields
+        new_hash = compute_content_hash(normalised_body)
+        if new_hash != post.content_hash:
+            post.body_md = normalised_body
+            post.content_hash = new_hash
+            post.word_count = compute_word_count(normalised_body)
+            post.reading_time_minutes = compute_reading_time_minutes(normalised_body)
+            # Update excerpt if not explicitly provided
+            if excerpt is None:
+                post.excerpt = compute_excerpt(normalised_body)
+            changed = True
 
     if title is not None:
         post.title = title
@@ -392,7 +432,7 @@ def update_post(
         session.flush()
         session.commit()
 
-    return post
+    return post, warnings
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,9 @@ class Post(Base):
     unpublish_at: Mapped[datetime | None] = mapped_column(nullable=True)
     revision_count: Mapped[int] = mapped_column(nullable=False, server_default="0")
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    word_count: Mapped[int | None] = mapped_column(nullable=True)
+    reading_time_minutes: Mapped[int | None] = mapped_column(nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # relationships

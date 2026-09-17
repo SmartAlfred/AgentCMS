@@ -69,6 +69,10 @@ class PostRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     published_at: datetime | None = None
+    word_count: int | None = None
+    reading_time_minutes: int | None = None
+    content_hash: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PostListResponse(BaseModel):
