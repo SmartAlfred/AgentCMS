@@ -70,6 +70,6 @@ def test_unknown_route_returns_actionable_problem(client: TestClient) -> None:
 
 def test_root_pointer_lists_the_agent_facing_surfaces(client: TestClient) -> None:
     body = client.get("/").json()
-    assert body["docs"] == "/docs"
+    assert "instructions" in body
+    assert body["llms_txt"] == "/llms.txt"
     assert body["openapi"] == "/openapi.json"
-    assert body["health"] == "/healthz"

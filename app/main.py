@@ -16,10 +16,11 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from fastapi.openapi.utils import get_openapi
 
 from app.api.docs import router as docs_router
 from app.api.health import router as health_router
+from app.api.llms import router as llms_router
 from app.config import Settings, get_settings
 from app.db.session import dispose_engine
 from app.errors import register_error_handlers
@@ -84,22 +85,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     if settings.docs_enabled:
         app.include_router(docs_router)
+    app.include_router(llms_router)
     register_v1_routes(app)
     register_public_routes(app)
 
-    @app.get("/", include_in_schema=False)
-    def root() -> JSONResponse:
-        """Placeholder pointer. #9 replaces this with content-negotiated HTML/text."""
-
-        payload: dict[str, Any] = {
-            "service": settings.app_name,
-            "version": settings.app_version,
-            "docs": "/docs",
-            "openapi": "/openapi.json",
-            "health": "/healthz",
-            "readiness": "/readyz",
+    # Customise the generated OpenAPI document: add security schemes and servers.
+    def custom_openapi() -> dict[str, Any]:
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+            tags=app.openapi_tags,
+        )
+        schema["components"] = schema.get("components", {})
+        schema["components"]["securitySchemes"] = {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "API token (acms_...)",
+                "description": "Standard API token. Get one via POST /v1/admin/tokens.",
+            },
+            "capabilityToken": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "Capability token (cap_...)",
+                "description": (
+                    "Pre-scoped capability token from a /c/{token} link. "
+                    "Visit the link to see its permissions."
+                ),
+            },
         }
-        return JSONResponse(content=payload)
+        schema["servers"] = [{"url": "/", "description": "Current instance"}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
 
     return app
 
