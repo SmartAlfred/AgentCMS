@@ -102,14 +102,44 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        errors = [
-            {
+        errors: list[dict[str, Any]] = []
+        is_json_parse = False
+        for error in exc.errors():
+            entry: dict[str, Any] = {
                 "field": ".".join(str(part) for part in error.get("loc", ()) if part != "body"),
+                "code": _VALIDATION_CODE_MAP.get(error.get("type", ""), "invalid"),
                 "message": error.get("msg", ""),
                 "type": error.get("type", ""),
             }
-            for error in exc.errors()
-        ]
+            ctx = error.get("ctx", {})
+            if error.get("type") == "json_invalid":
+                is_json_parse = True
+                # Surface the JSON decode error detail and byte offset
+                if "error" in ctx:
+                    entry["detail"] = str(ctx["error"])
+                # byte offset: loc[1] holds the position for json_invalid errors
+                loc = error.get("loc", ())
+                if len(loc) > 1:
+                    entry["byte_offset"] = loc[1]
+            for k, v in ctx.items():
+                if not isinstance(v, Exception):
+                    entry[k] = v
+            errors.append(entry)
+
+        if is_json_parse:
+            return problem_response(
+                request,
+                status_code=400,
+                code="json-parse-error",
+                title="Malformed request body",
+                detail="The request body is not valid JSON.",
+                hint=(
+                    "Ensure the body is well-formed JSON and retry. "
+                    "Truncated or syntactically broken JSON causes this error."
+                ),
+                extra={"errors": errors},
+            )
+
         return problem_response(
             request,
             status_code=422,
@@ -151,6 +181,22 @@ def register_error_handlers(app: FastAPI) -> None:
             ),
         )
 
+
+_VALIDATION_CODE_MAP: dict[str, str] = {
+    "json_invalid": "json-parse-error",
+    "missing": "missing-field",
+    "string_type": "invalid-type",
+    "int_type": "invalid-type",
+    "list_type": "invalid-type",
+    "bool_type": "invalid-type",
+    "value_error": "invalid-value",
+    "string_too_long": "value-too-long",
+    "string_too_short": "value-too-short",
+    "int_too_large": "value-out-of-range",
+    "int_too_small": "value-out-of-range",
+    "enum": "invalid-enum-value",
+    "extra_forbidden": "unexpected-field",
+}
 
 _HTTP_TITLES: dict[int, str] = {
     400: "Bad request",
