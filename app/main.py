@@ -85,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.docs_enabled:
         app.include_router(docs_router)
     register_v1_routes(app)
+    register_public_routes(app)
 
     @app.get("/", include_in_schema=False)
     def root() -> JSONResponse:
@@ -111,6 +112,14 @@ def register_v1_routes(app: FastAPI) -> None:
 
     app.include_router(v1_router, prefix="/v1")
     app.include_router(cap_router)
+
+
+def register_public_routes(app: FastAPI) -> None:
+    """Mount the public read surface (ticket #8)."""
+    from app.api.public import router as public_router
+
+    # Public routes must be last — they use catch-all patterns like /{site}/{slug}
+    app.include_router(public_router)
 
 
 app = create_app()
