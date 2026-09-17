@@ -70,9 +70,7 @@ def _slug_conflict_slug(base_slug: str, session: Session, site_id: uuid.UUID) ->
     """Find a free slug by appending -2, -3, ... suffixes."""
     candidate = base_slug
     n = 2
-    while session.query(func.count(Post.id)).filter(
-        Post.site_id == site_id, Post.slug == candidate
-    ).scalar():
+    while session.query(func.count(Post.id)).filter(Post.site_id == site_id, Post.slug == candidate).scalar():
         candidate = f"{base_slug}-{n}"
         n += 1
     return candidate
@@ -200,10 +198,14 @@ def create_post(
         raise SlugInvalidError(slug, "must contain only lowercase letters, digits, and single hyphens")
 
     # Check for slug collision
-    existing = session.query(Post).filter(
-        Post.site_id == site.id,
-        Post.slug == slug,
-    ).first()
+    existing = (
+        session.query(Post)
+        .filter(
+            Post.site_id == site.id,
+            Post.slug == slug,
+        )
+        .first()
+    )
     if existing is not None:
         suggested = _slug_conflict_slug(slug, session, site.id)
         raise SlugConflictError(slug, suggested, site=site_slug)
@@ -336,7 +338,8 @@ def update_post(
 
     if post.status == "trashed":
         raise InvalidTransitionError(
-            "update", "trashed",
+            "update",
+            "trashed",
             hint="Restore the post first (not yet supported), or create a new one.",
         )
 
@@ -356,11 +359,15 @@ def update_post(
     if slug is not None and slug != post.slug:
         if not _SLUG_RE.match(slug):
             raise SlugInvalidError(slug, "must contain only lowercase letters, digits, and single hyphens")
-        existing = session.query(Post).filter(
-            Post.site_id == post.site_id,
-            Post.slug == slug,
-            Post.id != post.id,
-        ).first()
+        existing = (
+            session.query(Post)
+            .filter(
+                Post.site_id == post.site_id,
+                Post.slug == slug,
+                Post.id != post.id,
+            )
+            .first()
+        )
         if existing is not None:
             suggested = _slug_conflict_slug(slug, session, post.site_id)
             raise SlugConflictError(slug, suggested)
@@ -404,7 +411,8 @@ def publish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
 
     if post.status not in ("draft", "pending_review"):
         raise InvalidTransitionError(
-            "publish", post.status,
+            "publish",
+            post.status,
             allowed_from=["draft", "pending_review"],
         )
 
@@ -429,7 +437,8 @@ def unpublish_post(session: Session, post_id: str) -> tuple[Post, list[str]]:
 
     if post.status != "published":
         raise InvalidTransitionError(
-            "unpublish", post.status,
+            "unpublish",
+            post.status,
             allowed_from=["published"],
         )
 

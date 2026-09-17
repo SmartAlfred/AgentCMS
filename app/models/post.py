@@ -10,8 +10,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, Index, String, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -30,9 +30,7 @@ class Post(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("sites.id", ondelete="CASCADE"),
@@ -43,17 +41,13 @@ class Post(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False, server_default="")
     body_md: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="draft", index=True
-    )
-    frontmatter: Mapped[dict | None] = mapped_column(JSON, nullable=True, server_default="{}")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft", index=True)
+    frontmatter: Mapped[dict | None] = mapped_column(JSONB, nullable=True, server_default="{}")
     author_label: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("actors.id", ondelete="SET NULL"), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now(), onupdate=func.now()
     )

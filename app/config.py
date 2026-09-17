@@ -11,10 +11,10 @@ and documented in ``.env.example``.  Two rules make misconfiguration loud:
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DevSecretKey = str
 
@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     docs_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8000
-    cors_origins: list[str] = Field(default_factory=list)
+    # ``NoDecode``: pydantic-settings would otherwise JSON-decode this complex
+    # field before validation, and the documented empty value (``CORS_ORIGINS=``
+    # in .env.example) is not valid JSON.  The validator below does the splitting.
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # -- security -----------------------------------------------------------
     secret_key: str = DEV_SECRET_KEY

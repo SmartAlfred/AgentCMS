@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY app ./app
+# setuptools declares `scripts` as a package (scripts/seed.py), so it must be
+# present for `pip install .` to build the wheel — see docs/DEPLOYING.md.
+COPY scripts ./scripts
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
     && /opt/venv/bin/pip install .

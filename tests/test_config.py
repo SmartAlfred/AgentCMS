@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,22 @@ def test_env_example_has_no_undocumented_setting() -> None:
     )
 
 
+def test_env_example_copy_boots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A verbatim copy of .env.example must load (#26).
+
+    ``cp .env.example .env`` is step one of the documented quickstart, so the
+    empty ``CORS_ORIGINS=`` line has to parse instead of raising SettingsError.
+    """
+
+    for var in tuple(os.environ):
+        if var in {name.upper() for name in Settings.model_fields}:
+            monkeypatch.delenv(var, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(ENV_EXAMPLE.read_text())
+    settings = Settings(_env_file=env_file)
+    assert settings.cors_origins == []
+
+
 def test_development_defaults_boot(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in ("APP_ENV", "SECRET_KEY", "DATABASE_URL"):
         monkeypatch.delenv(var, raising=False)
@@ -47,7 +64,10 @@ def test_development_defaults_boot(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.docs_url == "http://127.0.0.1:8000/docs"
 
 
-def test_production_refuses_the_dev_secret_key() -> None:
+def test_production_refuses_the_dev_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Isolate from the ambient shell: the point of this test is that the *dev
+    # default* is refused, so no SECRET_KEY may be inherited from the environment.
+    monkeypatch.delenv("SECRET_KEY", raising=False)
     with pytest.raises(ValidationError) as excinfo:
         Settings(
             _env_file=None,
@@ -68,7 +88,10 @@ def test_production_refuses_a_short_secret_key() -> None:
     assert "at least 32 characters" in str(excinfo.value)
 
 
-def test_production_refuses_the_dev_database_url() -> None:
+def test_production_refuses_the_dev_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Same isolation as above: `export DATABASE_URL=…` (which the migrations step
+    # of the CI gate needs) must not silently disarm this test.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(ValidationError) as excinfo:
         Settings(_env_file=None, app_env="production", secret_key="x" * 40)
     assert "DATABASE_URL" in str(excinfo.value)

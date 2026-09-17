@@ -119,8 +119,18 @@ fmt: install ## Auto-format and auto-fix
 	$(RUFF) format .
 	$(RUFF) check --fix .
 
+.PHONY: gate
+gate: lint test ## CI gate: the lint + test jobs of .github/workflows/ci.yml
+
+.PHONY: gate-migrations
+gate-migrations: install ## CI gate: the migrations job (DESTRUCTIVE: wipes every table in $$DATABASE_URL)
+	$(ALEMBIC) upgrade head
+	$(ALEMBIC) downgrade base
+	$(ALEMBIC) upgrade head
+	$(ALEMBIC) check
+
 .PHONY: check
-check: lint test ## What CI runs
+check: gate ## Alias for gate
 
 .PHONY: openapi
 openapi: install ## Dump the OpenAPI 3.1 document to openapi.json

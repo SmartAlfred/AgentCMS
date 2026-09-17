@@ -30,7 +30,7 @@ services:
   # behind a compose profile and `make dev` never depends on it.
   #   docker compose --profile storage up -d   (or: make up-storage)
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: agentcms-minio
     profiles: ["storage"]
     environment:

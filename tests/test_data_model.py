@@ -85,9 +85,7 @@ class TestAllTablesExist:
     }
 
     def test_all_tables_present(self, db: Session) -> None:
-        result = db.execute(
-            text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-        )
+        result = db.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))
         actual = {row[0] for row in result.fetchall()}
         missing = self.EXPECTED_TABLES - actual
         assert not missing, f"Missing tables: {missing}"
@@ -349,24 +347,18 @@ class TestIndexes:
                 "WHERE tablename = 'posts' AND indexname = 'ix_posts_site_status_pub_id'"
             )
         )
-        assert (
-            result.fetchone() is not None
-        ), "Composite index on (site_id, status, published_at DESC, id) missing"
+        assert result.fetchone() is not None, (
+            "Composite index on (site_id, status, published_at DESC, id) missing"
+        )
 
     def test_unique_index_on_sites_slug(self, db: Session) -> None:
         result = db.execute(
-            text(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE tablename = 'sites' AND indexname = 'ix_sites_slug'"
-            )
+            text("SELECT indexname FROM pg_indexes WHERE tablename = 'sites' AND indexname = 'ix_sites_slug'")
         )
         assert result.fetchone() is not None
 
     def test_unique_index_on_tags_slug(self, db: Session) -> None:
         result = db.execute(
-            text(
-                "SELECT indexname FROM pg_indexes "
-                "WHERE tablename = 'tags' AND indexname = 'ix_tags_slug'"
-            )
+            text("SELECT indexname FROM pg_indexes WHERE tablename = 'tags' AND indexname = 'ix_tags_slug'")
         )
         assert result.fetchone() is not None
