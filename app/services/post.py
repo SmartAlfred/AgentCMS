@@ -226,6 +226,7 @@ def create_post(
     frontmatter: dict[str, Any] | None = None,
     actor_id: uuid.UUID,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Create a new post in draft status.
 
@@ -302,6 +303,27 @@ def create_post(
     # Handle tags
     if tags:
         _sync_tags(session, post, tags)
+
+    # Audit: record the creation
+    from app.services.audit import compute_content_hash as audit_hash
+    from app.services.audit import record_event
+
+    ctx = audit_ctx or {}
+    record_event(
+        session,
+        action="post.created",
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "human"),
+        source=source,
+        target_type="post",
+        target_id=str(post.id),
+        after_hash=audit_hash(normalised_body),
+        revision=1,
+        request_id=ctx.get("request_id"),
+        ip=ctx.get("ip"),
+        user_agent=ctx.get("user_agent"),
+    )
 
     session.commit()
     return post, norm_warnings
@@ -403,6 +425,7 @@ def update_post(
     frontmatter: dict[str, Any] | None = None,
     actor_id: uuid.UUID,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Partially update a post.  Creates a revision snapshot.
     Returns ``(post, warnings)`` where warnings include markdown normalisation notes.
@@ -476,6 +499,29 @@ def update_post(
         post.revision_count += 1
         _create_revision(session, post, actor_id=actor_id, source=source)
         session.flush()
+
+        # Audit: record the update
+        from app.services.audit import compute_content_hash as audit_hash
+        from app.services.audit import record_event
+
+        ctx = audit_ctx or {}
+        record_event(
+            session,
+            action="post.updated",
+            actor_id=actor_id,
+            actor_label=ctx.get("actor_label"),
+            actor_kind=ctx.get("actor_kind", "human"),
+            source=source,
+            target_type="post",
+            target_id=str(post.id),
+            before_hash=audit_hash(post.body_md),
+            after_hash=audit_hash(post.body_md),
+            revision=post.revision_count,
+            request_id=ctx.get("request_id"),
+            ip=ctx.get("ip"),
+            user_agent=ctx.get("user_agent"),
+        )
+
         session.commit()
 
     return post, warnings
@@ -492,6 +538,7 @@ def publish_post(
     *,
     actor_id: uuid.UUID,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Publish a draft post.  Idempotent — publishing twice is a no-op."""
     post = _resolve_post(session, post_id)
@@ -513,6 +560,28 @@ def publish_post(
     post.revision_count += 1
     _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
+
+    # Audit: record the publish
+    from app.services.audit import compute_content_hash as audit_hash
+    from app.services.audit import record_event
+
+    ctx = audit_ctx or {}
+    record_event(
+        session,
+        action="post.published",
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "human"),
+        source=source,
+        target_type="post",
+        target_id=str(post.id),
+        after_hash=audit_hash(post.body_md),
+        revision=post.revision_count,
+        request_id=ctx.get("request_id"),
+        ip=ctx.get("ip"),
+        user_agent=ctx.get("user_agent"),
+    )
+
     session.commit()
     return post, warnings
 
@@ -528,6 +597,7 @@ def unpublish_post(
     *,
     actor_id: uuid.UUID,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Unpublish a published post (back to draft)."""
     post = _resolve_post(session, post_id)
@@ -544,6 +614,28 @@ def unpublish_post(
     post.revision_count += 1
     _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
+
+    # Audit: record the unpublish
+    from app.services.audit import compute_content_hash as audit_hash
+    from app.services.audit import record_event
+
+    ctx = audit_ctx or {}
+    record_event(
+        session,
+        action="post.unpublished",
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "human"),
+        source=source,
+        target_type="post",
+        target_id=str(post.id),
+        before_hash=audit_hash(post.body_md),
+        revision=post.revision_count,
+        request_id=ctx.get("request_id"),
+        ip=ctx.get("ip"),
+        user_agent=ctx.get("user_agent"),
+    )
+
     session.commit()
     return post, warnings
 
@@ -559,6 +651,7 @@ def trash_post(
     *,
     actor_id: uuid.UUID,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> Post:
     """Soft-delete a post (status=trashed, deleted_at=now)."""
     post = _resolve_post(session, post_id)
@@ -571,6 +664,28 @@ def trash_post(
     post.revision_count += 1
     _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
+
+    # Audit: record the trash
+    from app.services.audit import compute_content_hash as audit_hash
+    from app.services.audit import record_event
+
+    ctx = audit_ctx or {}
+    record_event(
+        session,
+        action="post.trashed",
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "human"),
+        source=source,
+        target_type="post",
+        target_id=str(post.id),
+        before_hash=audit_hash(post.body_md),
+        revision=post.revision_count,
+        request_id=ctx.get("request_id"),
+        ip=ctx.get("ip"),
+        user_agent=ctx.get("user_agent"),
+    )
+
     session.commit()
     return post
 
@@ -586,6 +701,7 @@ def restore_post(
     *,
     actor_id: uuid.UUID,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Restore a trashed post back to draft status."""
     post = _resolve_post(session, post_id)
@@ -600,6 +716,28 @@ def restore_post(
     post.revision_count += 1
     _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
+
+    # Audit: record the restore
+    from app.services.audit import compute_content_hash as audit_hash
+    from app.services.audit import record_event
+
+    ctx = audit_ctx or {}
+    record_event(
+        session,
+        action="post.reverted",
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "human"),
+        source=source,
+        target_type="post",
+        target_id=str(post.id),
+        after_hash=audit_hash(post.body_md),
+        revision=post.revision_count,
+        request_id=ctx.get("request_id"),
+        ip=ctx.get("ip"),
+        user_agent=ctx.get("user_agent"),
+    )
+
     session.commit()
     return post, warnings
 
@@ -703,6 +841,7 @@ def revert_post(
     actor_id: uuid.UUID,
     reason: str | None = None,
     source: str = "api",
+    audit_ctx: dict[str, Any] | None = None,
 ) -> Post:
     """Revert a post to a previous revision.
 
@@ -741,6 +880,30 @@ def revert_post(
     post.revision_count += 1
     _create_revision(session, post, actor_id=actor_id, source=source)
     session.flush()
+
+    # Audit: record the revert
+    from app.services.audit import compute_content_hash as audit_hash
+    from app.services.audit import record_event
+
+    ctx = audit_ctx or {}
+    record_event(
+        session,
+        action="post.reverted",
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "human"),
+        source=source,
+        target_type="post",
+        target_id=str(post.id),
+        before_hash=audit_hash(post.body_md),
+        after_hash=audit_hash(target.body_md),
+        revision=post.revision_count,
+        request_id=ctx.get("request_id"),
+        ip=ctx.get("ip"),
+        user_agent=ctx.get("user_agent"),
+        event_metadata={"target_revision": target_revision, "reason": reason},
+    )
+
     session.commit()
     return post
 

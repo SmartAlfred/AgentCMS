@@ -196,6 +196,13 @@ def create_post_endpoint(
         excerpt=body.excerpt,
         frontmatter=body.frontmatter,
         actor_id=auth.actor_id,
+        audit_ctx={
+            "actor_label": auth.label,
+            "actor_kind": "machine",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
     )
 
     data = _post_to_dict(post, site_slug, session=db)
@@ -385,6 +392,13 @@ def update_post_endpoint(
         excerpt=body.excerpt,
         frontmatter=body.frontmatter,
         actor_id=auth.actor_id,
+        audit_ctx={
+            "actor_label": auth.label,
+            "actor_kind": "machine",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
     )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
@@ -465,7 +479,18 @@ def publish_post_endpoint(
     if if_match is not None:
         check_if_match(if_match, post_check.content_hash, post_check.revision_count)
 
-    post, warnings = publish_post(db, identifier, actor_id=auth.actor_id)
+    post, warnings = publish_post(
+        db,
+        identifier,
+        actor_id=auth.actor_id,
+        audit_ctx={
+            "actor_label": auth.label,
+            "actor_kind": "machine",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
     data["warnings"] = warnings
@@ -519,7 +544,18 @@ def unpublish_post_endpoint(
     if if_match is not None:
         check_if_match(if_match, post_check.content_hash, post_check.revision_count)
 
-    post, warnings = unpublish_post(db, identifier, actor_id=auth.actor_id)
+    post, warnings = unpublish_post(
+        db,
+        identifier,
+        actor_id=auth.actor_id,
+        audit_ctx={
+            "actor_label": auth.label,
+            "actor_kind": "machine",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
     data["warnings"] = warnings
@@ -548,7 +584,18 @@ def trash_post_endpoint(
     if if_match is not None:
         check_if_match(if_match, post_check.content_hash, post_check.revision_count)
 
-    post = trash_post(db, identifier, actor_id=auth.actor_id)
+    post = trash_post(
+        db,
+        identifier,
+        actor_id=auth.actor_id,
+        audit_ctx={
+            "actor_label": auth.label,
+            "actor_kind": "machine",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)
     return data
@@ -677,6 +724,13 @@ def revert_post_endpoint(
         target_revision=body.revision,
         actor_id=auth.actor_id,
         reason=body.reason,
+        audit_ctx={
+            "actor_label": auth.label,
+            "actor_kind": "machine",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
     )
     site_slug = post.site.slug if post.site else "blog"
     data = _post_to_dict(post, site_slug, session=db)

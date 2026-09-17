@@ -277,6 +277,13 @@ def create_post_via_link(
         excerpt=body.excerpt,
         actor_id=actor.id,
         source="link",
+        audit_ctx={
+            "actor_label": _link.label if _link else actor.label,
+            "actor_kind": "capability_link",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
     )
 
     data = _post_to_dict(post, site_slug, session=db)
@@ -330,7 +337,19 @@ def publish_post_via_link(
     site_slug, _ = parsed
     actor, _link = _verify_link_auth(token, request, db, required_verb="posts:publish")
 
-    post, warnings = publish_post(db, post_id, actor_id=actor.id, source="link")
+    post, warnings = publish_post(
+        db,
+        post_id,
+        actor_id=actor.id,
+        source="link",
+        audit_ctx={
+            "actor_label": _link.label if _link else actor.label,
+            "actor_kind": "capability_link",
+            "request_id": getattr(request.state, "request_id", None),
+            "ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
     data = _post_to_dict(post, site_slug, session=db)
     data["warnings"] = warnings
     return data

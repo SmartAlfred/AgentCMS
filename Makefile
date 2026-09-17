@@ -154,3 +154,24 @@ prod-down: ## Tear down compose.prod.yml
 clean: ## Remove caches and the local venv
 	rm -rf $(VENV) .pytest_cache .mypy_cache .ruff_cache
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+.PHONY: audit-verify
+audit-verify: install ## Verify the audit_events hash chain is unbroken
+	@$(PY) -c "\
+from app.db.session import get_engine; \
+from sqlalchemy import text; \
+from app.config import get_settings; \
+import hashlib, json, sys; \
+engine = get_engine(); \
+rows = engine.execute(text('SELECT id, created_at, actor_id, action, target_type, target_id, before_hash, after_hash, prev_hash FROM audit_events ORDER BY created_at ASC, id ASC')).fetchall(); \
+prev = None; errors = 0; \
+for r in rows: \
+    payload = json.dumps({'id': str(r[0]), 'created_at': str(r[1]), 'actor_id': str(r[2]) if r[2] else '', 'action': r[3], 'target_type': r[4] or '', 'target_id': r[5] or '', 'before_hash': r[6] or '', 'after_hash': r[7] or '', 'prev_hash': r[8] or ''}, sort_keys=True, default=str); \
+    h = hashlib.sha256(payload.encode()).hexdigest(); \
+    if r[8] != prev: \
+        print(f'HASH MISMATCH at event {r[0]}: expected prev_hash={prev}, got {r[8]}'); errors += 1; \
+    prev = h; \
+if errors: \
+    print(f'FAILED: {errors} hash chain violations detected'); sys.exit(1); \
+else: \
+    print(f'OK: {len(rows)} events verified, hash chain intact')" 2>&1
