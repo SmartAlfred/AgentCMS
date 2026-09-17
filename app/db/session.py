@@ -24,7 +24,10 @@ logger = logging.getLogger("app.db")
 
 _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
-_lock = threading.Lock()
+# Reentrant on purpose: ``get_session_factory`` used to acquire this lock and then
+# call ``get_engine``, which acquires the same lock -- a guaranteed self-deadlock in
+# any fresh process on its first DB request (fixed in #27).
+_lock = threading.RLock()
 
 
 def get_engine() -> Engine:
@@ -53,10 +56,13 @@ def get_session_factory() -> sessionmaker[Session]:
 
     global _session_factory
     if _session_factory is None:
+        # Resolve the engine *before* taking the lock so the two lazy singletons never
+        # nest an acquisition (see the RLock note above).
+        engine = get_engine()
         with _lock:
             if _session_factory is None:
                 _session_factory = sessionmaker(
-                    bind=get_engine(),
+                    bind=engine,
                     autoflush=False,
                     expire_on_commit=False,
                     future=True,
