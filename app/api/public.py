@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from xml.dom import minidom
 
@@ -458,7 +458,7 @@ def atom_feed(site_slug: str, request: Request) -> Response:
         site = get_site(db, site_slug)
         posts = list_published_posts_for_site(db, site.id)  # type: ignore[union-attr]
         base_url = _get_base_url(request)
-        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         feed = ET.Element("feed")
         feed.set("xmlns", "http://www.w3.org/2005/Atom")
