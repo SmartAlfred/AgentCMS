@@ -44,6 +44,8 @@ TAGS_METADATA = [
     {"name": "tags", "description": "Tag listing with counts and merge."},
     {"name": "sites", "description": "Content containers (site slug, publish mode)."},
     {"name": "assets", "description": "Media uploads: presigned URLs, inline upload, variants."},
+    {"name": "webhooks", "description": "Webhook subscriptions: CRUD, test ping, redeliver."},
+    {"name": "events", "description": "Pollable event feed for agents that cannot receive webhooks."},
 ]
 
 

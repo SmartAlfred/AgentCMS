@@ -37,6 +37,7 @@ TRUNCATE_CANDIDATES = (
     "assets",
     "webhooks",
     "webhook_deliveries",
+    "event_outbox",
     "redirects",
 )
 

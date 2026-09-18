@@ -378,6 +378,29 @@ def create_post(
         user_agent=ctx.get("user_agent"),
     )
 
+    # Outbox: emit post.created event (#21)
+    from app.services.webhook import write_event_to_outbox
+
+    event_payload = {
+        "id": str(post.id),
+        "slug": post.slug,
+        "title": post.title,
+        "status": post.status,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+    }
+    write_event_to_outbox(
+        session,
+        event_type="post.created",
+        site_slug=site_slug,
+        payload=event_payload,
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "machine"),
+        request_id=ctx.get("request_id"),
+    )
+
     session.commit()
     return post, norm_warnings
 
@@ -632,6 +655,30 @@ def update_post(
             user_agent=ctx.get("user_agent"),
         )
 
+        # Outbox: emit post.updated event (#21)
+        from app.services.webhook import write_event_to_outbox
+
+        _site_slug = post.site.slug if post.site else None
+        event_payload = {
+            "id": str(post.id),
+            "slug": post.slug,
+            "title": post.title,
+            "status": post.status,
+            "url": f"/posts/{post.slug}",
+            "markdown_url": f"/posts/{post.slug}.md",
+            "revision": post.revision_count,
+        }
+        write_event_to_outbox(
+            session,
+            event_type="post.updated",
+            site_slug=_site_slug,
+            payload=event_payload,
+            actor_id=actor_id,
+            actor_label=ctx.get("actor_label"),
+            actor_kind=ctx.get("actor_kind", "machine"),
+            request_id=ctx.get("request_id"),
+        )
+
         session.commit()
 
     return post, warnings
@@ -740,6 +787,33 @@ def publish_post(
         user_agent=ctx.get("user_agent"),
     )
 
+    # Outbox: emit post.published event (#21)
+    from app.models.site import Site as SiteModel
+    from app.services.webhook import write_event_to_outbox
+
+    _site = session.query(SiteModel).filter(SiteModel.id == post.site_id).first()
+    _site_slug = _site.slug if _site else None
+    event_payload = {
+        "id": str(post.id),
+        "slug": post.slug,
+        "title": post.title,
+        "status": post.status,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+    }
+    write_event_to_outbox(
+        session,
+        event_type="post.published",
+        site_slug=_site_slug,
+        payload=event_payload,
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "machine"),
+        request_id=ctx.get("request_id"),
+    )
+
     session.commit()
     return post, warnings
 
@@ -794,6 +868,30 @@ def unpublish_post(
         user_agent=ctx.get("user_agent"),
     )
 
+    # Outbox: emit post.unpublished event (#21)
+    from app.services.webhook import write_event_to_outbox
+
+    _site_slug = post.site.slug if post.site else None
+    event_payload = {
+        "id": str(post.id),
+        "slug": post.slug,
+        "title": post.title,
+        "status": post.status,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+    }
+    write_event_to_outbox(
+        session,
+        event_type="post.unpublished",
+        site_slug=_site_slug,
+        payload=event_payload,
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "machine"),
+        request_id=ctx.get("request_id"),
+    )
+
     session.commit()
     return post, warnings
 
@@ -842,6 +940,30 @@ def trash_post(
         request_id=ctx.get("request_id"),
         ip=ctx.get("ip"),
         user_agent=ctx.get("user_agent"),
+    )
+
+    # Outbox: emit post.trashed event (#21)
+    from app.services.webhook import write_event_to_outbox
+
+    _site_slug = post.site.slug if post.site else None
+    event_payload = {
+        "id": str(post.id),
+        "slug": post.slug,
+        "title": post.title,
+        "status": post.status,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+    }
+    write_event_to_outbox(
+        session,
+        event_type="post.trashed",
+        site_slug=_site_slug,
+        payload=event_payload,
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "machine"),
+        request_id=ctx.get("request_id"),
     )
 
     session.commit()
@@ -894,6 +1016,30 @@ def restore_post(
         request_id=ctx.get("request_id"),
         ip=ctx.get("ip"),
         user_agent=ctx.get("user_agent"),
+    )
+
+    # Outbox: emit post.restored event (#21)
+    from app.services.webhook import write_event_to_outbox
+
+    _site_slug = post.site.slug if post.site else None
+    event_payload = {
+        "id": str(post.id),
+        "slug": post.slug,
+        "title": post.title,
+        "status": post.status,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+    }
+    write_event_to_outbox(
+        session,
+        event_type="post.restored",
+        site_slug=_site_slug,
+        payload=event_payload,
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "machine"),
+        request_id=ctx.get("request_id"),
     )
 
     session.commit()
@@ -1060,6 +1206,31 @@ def revert_post(
         ip=ctx.get("ip"),
         user_agent=ctx.get("user_agent"),
         event_metadata={"target_revision": target_revision, "reason": reason},
+    )
+
+    # Outbox: emit post.reverted event (#21)
+    from app.services.webhook import write_event_to_outbox
+
+    _site_slug = post.site.slug if post.site else None
+    event_payload = {
+        "id": str(post.id),
+        "slug": post.slug,
+        "title": post.title,
+        "status": post.status,
+        "url": f"/posts/{post.slug}",
+        "markdown_url": f"/posts/{post.slug}.md",
+        "revision": post.revision_count,
+        "target_revision": target_revision,
+    }
+    write_event_to_outbox(
+        session,
+        event_type="post.reverted",
+        site_slug=_site_slug,
+        payload=event_payload,
+        actor_id=actor_id,
+        actor_label=ctx.get("actor_label"),
+        actor_kind=ctx.get("actor_kind", "machine"),
+        request_id=ctx.get("request_id"),
     )
 
     session.commit()
