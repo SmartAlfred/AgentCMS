@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.types import UTCDateTime
 
 
 class Site(Base):
@@ -26,7 +27,7 @@ class Site(Base):
     base_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     publish_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="auto")
     settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True, server_default="{}")
-    trust_mode_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    trust_mode_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now(), onupdate=func.now()
@@ -35,3 +36,4 @@ class Site(Base):
     # relationships
     posts = relationship("Post", back_populates="site", lazy="selectin")
     actors = relationship("Actor", back_populates="site", lazy="noload")
+    content_policies = relationship("ContentPolicy", back_populates="site", lazy="noload")

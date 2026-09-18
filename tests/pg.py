@@ -192,7 +192,10 @@ def start_initdb_postgres() -> EphemeralPostgres:
         shutil.rmtree(sockdir, ignore_errors=True)
         raise RuntimeError(f"initdb failed: {init.stderr.strip()}")
 
-    options = f"-p {port} -k {sockdir} -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off"
+    options = (
+        f"-p {port} -k {sockdir} -c listen_addresses=127.0.0.1 "
+        "-c fsync=off -c full_page_writes=off -c timezone=UTC"
+    )
     started = _run(
         [
             str(bindir / "pg_ctl"),
