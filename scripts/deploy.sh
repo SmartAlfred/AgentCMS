@@ -65,7 +65,13 @@ deploy() {
   local prev
   prev="$(read_marker)"
 
-  # 1. Migration gate: refuse to rollout when migrations would be applied to a
+  # 1. Ensure the database service is running.  Idempotent: on an already-up
+  #    stack this is a no-op; on a fresh environment it bootstraps Postgres so
+  #    the migration gate, the migration job and the api below can resolve `db`.
+  echo "==> ensuring database service is up..."
+  $COMPOSE_BIN -f compose.prod.yml up -d db
+
+  # 2. Migration gate: refuse to rollout when migrations would be applied to a
   #    live cluster.  The DB team migrates via `make gate-migrations` off-hours;
   #    this check is the belt-and-braces guard.
   echo "==> migration gate..."
@@ -86,11 +92,11 @@ deploy() {
     fi
   fi
 
-  # 2. Build + tag the image.
+  # 3. Build + tag the image.
   echo "==> building ${TAG}"
   docker build -t "$TAG" .
 
-  # 3. Rolling update with a health gate (zero-downtime: compose keeps the
+  # 4. Rolling update with a health gate (zero-downtime: compose keeps the
   #    old container serving until the new one accepts /readyz).
   write_marker "$prev"   # remember the previous image for --rollback
   $COMPOSE_BIN -f compose.prod.yml up -d --no-deps --wait api --force-recreate

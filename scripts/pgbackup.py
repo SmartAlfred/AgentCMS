@@ -53,7 +53,7 @@ def dump_stem(ts: datetime) -> str:
 
 
 def _require_binaries() -> None:
-    for binary in ("pg_dump", "pg_restore", "openssl"):
+    for binary in ("pg_dump", "pg_restore", "psql", "openssl"):
         if shutil.which(binary) is None:
             raise BackupError(f"required binary not found on PATH: {binary}")
 
@@ -238,25 +238,58 @@ def restore_dump(data: bytes, target_url: str) -> None:
     The target must be an empty scratch database created by the drill.
     ``pg_restore`` refuses ``-`` as a stdin filename, so the decrypted dump is
     staged in a temp file first.
+
+    The restore goes through ``pg_restore -f -`` (generate SQL to stdout) +
+    ``psql`` rather than ``pg_restore -d`` because pg_restore >= 17 embeds
+    ``SET transaction_timeout = 0;`` in its output unconditionally while that
+    parameter only exists on Postgres >= 17 — a 17/18 client restoring into a
+    16 server would otherwise fail on that one housekeeping statement (it only
+    disables a PG17+ default timeout; it is a no-op on older servers).  The
+    offending line is stripped before replay.  ``--exit-on-error`` keeps the
+    generation strict and ``psql -v ON_ERROR_STOP=1`` aborts on any real SQL
+    error, so the drill's guarantees are preserved.
     """
+    import subprocess
     import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as staged:
         staged.write(data)
         staged_path = staged.name
     try:
-        cmd = [
-            "pg_restore",
-            "--no-owner",
-            "--no-privileges",
-            "--exit-on-error",
-            "-d",
-            to_libpq_url(target_url),
-            staged_path,
-        ]
-        proc = subprocess.run(cmd, capture_output=True, check=False)
-        if proc.returncode != 0:
-            raise BackupError(f"pg_restore failed: {proc.stderr.decode()[-800:]}")
+        gen = subprocess.run(
+            [
+                "pg_restore",
+                "--no-owner",
+                "--no-privileges",
+                "--exit-on-error",
+                "-f",
+                "-",
+                staged_path,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if gen.returncode != 0:
+            raise BackupError(f"pg_restore generate failed: {gen.stderr.decode()[-800:]}")
+        guarded = subprocess.run(
+            [
+                "psql",
+                "--no-psqlrc",
+                "-q",
+                "-v",
+                "ON_ERROR_STOP=1",
+                to_libpq_url(target_url),
+            ],
+            input=b"\n".join(
+                line
+                for line in gen.stdout.replace(b"\r\n", b"\n").split(b"\n")
+                if line.strip() != b"SET transaction_timeout = 0;"
+            ),
+            capture_output=True,
+            check=False,
+        )
+        if guarded.returncode != 0:
+            raise BackupError(f"pg_restore failed: {guarded.stderr.decode()[-800:]}")
     finally:
         Path(staged_path).unlink(missing_ok=True)
 

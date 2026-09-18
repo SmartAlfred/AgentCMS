@@ -21,6 +21,9 @@ htmlcov/
 .env.local
 *.local.env
 
+# Operational state written by scripts/deploy.sh
+.deploy-last-tag
+
 # Local Postgres clusters created by the test suite / dev helper
 .pgdata/
 .pgtest/

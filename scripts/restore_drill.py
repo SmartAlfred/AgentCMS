@@ -92,7 +92,9 @@ def _build_scratch_database(source_url: str) -> tuple[str, str]:
             conn.execute(text(f'CREATE DATABASE "{scratch}"'))
     finally:
         engine.dispose()
-    scratch_url = str(parsed.set(database=scratch))
+    # NB: ``str(URL)`` renders the password masked as ``***`` — the drill must
+    # hand the real password to pg_restore, so render with hide_password=False.
+    scratch_url = parsed.set(database=scratch).render_as_string(hide_password=False)
     logger.info("scratch database: %s", _mask_url(scratch_url))
     return scratch_url, scratch
 

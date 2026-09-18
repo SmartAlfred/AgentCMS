@@ -1,4 +1,65 @@
-# NOTES-opencode.md — static export (ticket #23) + observability/backup/deploy (#24)
+# NOTES-opencode.md — run/test/deploy docs (#26) on top of export/observability (#23/#24)
+
+## #26 in one paragraph
+
+Ticket #26 ("README — how to run, test and deploy the service; make the push
+gate match CI") is about **making the docs match what the service actually
+does** — every command in them executed at this revision, real output pasted.
+The docs are `README.md` (rewritten), `docs/RUNNING.md`, `docs/TESTING.md`,
+`docs/DEPLOYING.md` (new). While executing every documented command, five real
+defects that only appear when you *actually run* the flows were found and
+fixed (below). The full gate is green and the live GitHub Pages site is HTTP
+200. No off-limits repo-root files were touched.
+
+## Real bugs found & fixed while verifying the docs (#26)
+
+1. **`scripts/restore_drill.py` — masked password.** The scratch-DB URL was
+   built with `str(URL)`, which SQLAlchemy renders with the password `***` —
+   so the restore drill failed with `password authentication failed` against
+   any password-authed server (docker/CI's `postgres:16`). Only the
+   `initdb`/trust path looked green. Fixed with
+   `parsed.set(database=scratch).render_as_string(hide_password=False)`.
+2. **`scripts/pgbackup.py` — `SET transaction_timeout = 0;` skew.** Homebrew's
+   pg_restore 18 rebroadcasts that PG17+ housekeeping statement into PG16
+   servers, which reject it (`unrecognized configuration parameter`); the old
+   `pg_restore -d` path failed on the very target version. `restore_dump` now
+   runs `pg_restore --no-owner --no-privileges --exit-on-error -f -`, strips
+   the one `SET transaction_timeout = 0;` line, and replays the SQL through
+   `psql --no-psqlrc -q -v ON_ERROR_STOP=1`; `psql` was added to
+   `_require_binaries()`.
+3. **`pyproject.toml` — `httpx` was a dev-only extra.** Runtime modules
+   (`app/services/validation.py`, `content_policy.py`, `webhook.py`,
+   `health.py`, `app/api/v1/assets.py`) import it, so the production image
+   crashed on boot (`ModuleNotFoundError: No module named 'httpx'`). Moved
+   `httpx>=0.27` into `[project].dependencies`.
+4. **`compose.prod.yml` — `api` raced the migrate job on a fresh volume.**
+   The api entrypoint defensively auto-migrates, so simultaneous start on an
+   empty volume hit `UniqueViolation` on `alembic_version`. `api` now
+   `depends_on: migrate: condition: service_completed_successfully`.
+5. **`scripts/deploy.sh` — fresh-environment bootstrap was broken.** The
+   rolling update ran `compose -f compose.prod.yml up -d --no-deps api`; on a
+   fresh env `db` was never started, so `api` died with
+   `failed to resolve host 'db'` (also broke the migrate-job path, which needs
+   db up). Fixed: `up -d db` first (idempotent no-op on a running stack).
+   Verified end-to-end in **both** modes — plain rollout (preflight green,
+   no pending) and first deploy to an empty volume (preflight fails → one-shot
+   `migrate` job applies all 14 revisions → rolling update → `/readyz` gate →
+   `deploy complete`). `.deploy-last-tag` is now gitignored.
+
+## Deliberate divergences from the ticket's assumptions (#26)
+
+- **"SQLite fallback" does not exist and will not be added.** The suite
+  (migrations, content API, FTS `tsvector`/trigram, conftest truncation) is
+  Postgres-only by design; `docs/TESTING.md` says so explicitly rather than
+  hand-wave it.
+- **`PUBLIC_BASE_URL` is not a setting.** The real variables are
+  `S3_PUBLIC_BASE_URL` (`app/config.py`, media URLs) and `BASE_URL` (the
+  Pages-export workflow's repo variable). `docs/DEPLOYING.md` maps them
+  instead of inventing a variable.
+- **Ticket's "main is red" no longer holds:** in this checkout the two #25
+  failures (formatter drift + alembic drift) were already fixed and the gate
+  was green before any doc work; docs show the green gate and reference #25
+  as resolved.
 
 ## What was delivered (#24)
 
@@ -103,10 +164,13 @@
    presigned PUT; without MinIO/S3 credentials locally only `file://` stores
    are exercised by tests. S3 retention is delegated to bucket lifecycle
    rules (documented in the runbook).
-4. **Docker deploy/rollback**: `deploy.sh`/`compose.prod.yml` are
-   environment-gated; docker isn't running here, so the rollout + health-gate
-   timing is documented (runbook §7) rather than executed. The load-test
-   helper (`scripts/load_test.py`) is the zero-dropped-request proof tool.
+4. **Docker deploy/rollback**: `deploy.sh`/`compose.prod.yml` are now
+   **executed end-to-end** in this checkout (docker running via OrbStack):
+   image build, prod stack up (migrate exit 0, api healthy, `/readyz` ready),
+   and `make deploy` in both plain and fresh-bootstrap modes (§ above). The
+   load-test helper (`scripts/load_test.py`) is the zero-dropped-request proof
+   tool; rollback after a failed deploy was not forced here (no failed deploy
+   to recover from).
 5. **Real GitHub Pages push / CI secrets**: still out of scope, unchanged from
    #23's note.
 6. **`disk_usage_ratio` callback**: refreshed only when a scraper-side
@@ -117,8 +181,14 @@
 
 `source .venv/bin/activate && python -m ruff format . && python -m pytest -q && python -m ruff check . && python -m ruff format --check . && python -m mypy`
 
-Result at handoff: 705 passed, 1 skipped (docker daemon not running for the
-infra-file test); ruff format/check and mypy all clean.
+Result at handoff: **706 passed** (docker-backed ephemeral `postgres:16-alpine`,
+docker running via OrbStack), ruff format/check and mypy all clean. The CI
+mirror gate was also green verbatim:
+`ruff format --check . && ruff check . && mypy && pytest -q` → 148 files
+already formatted / All checks passed! / no issues in 92 source files / 706
+passed. Migrations gate (`upgrade head → downgrade base → upgrade head →
+alembic check`) green against Postgres 16 → "No new upgrade operations
+detected."
 
 ## Hoisting notes for the next agent
 
