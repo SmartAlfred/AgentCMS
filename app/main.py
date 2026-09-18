@@ -94,6 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(llms_router)
     register_v1_routes(app)
     register_public_routes(app)
+    register_dashboard_routes(app)
 
     # Customise the generated OpenAPI document: add security schemes and servers.
     def custom_openapi() -> dict[str, Any]:
@@ -151,6 +152,13 @@ def register_public_routes(app: FastAPI) -> None:
 
     # Public routes must be last — they use catch-all patterns like /{site}/{slug}
     app.include_router(public_router)
+
+
+def register_dashboard_routes(app: FastAPI) -> None:
+    """Mount the human dashboard (ticket #18)."""
+    from app.dashboard import router as dashboard_router
+
+    app.include_router(dashboard_router)
 
 
 app = create_app()
