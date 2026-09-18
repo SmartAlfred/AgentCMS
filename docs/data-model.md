@@ -65,8 +65,15 @@ Agent-friendly posts with slug stability and immutable revisions.
 | `revision_count` | `integer` | NOT NULL, default `0` | |
 | `content_hash` | `varchar(64)` | NULLABLE | |
 | `deleted_at` | `datetime` | NULLABLE | Set on soft delete |
+| `search_vector` | `tsvector` | NULLABLE | Full-text search vector (title A, tags B, excerpt C, body D) |
 
 **Composite index:** `ix_posts_site_status_pub_id` on `(site_id, status, published_at DESC, id)`.
+**GIN index:** `ix_posts_search_vector` on `(search_vector)` for full-text search.
+**GIN index:** `ix_posts_title_trgm` on `(title gin_trgm_ops)` for fuzzy matching.
+**Index:** `ix_posts_slug` on `(slug)` for fast slug lookups.
+
+**Trigger:** `trg_posts_search_vector` fires on INSERT/UPDATE of title, body_md, excerpt to keep `search_vector` in sync.
+**Trigger:** `trg_posts_search_vector_on_tags` fires on INSERT/DELETE/UPDATE of post_tags to keep `search_vector` in sync when tags change.
 
 ### `post_revisions`
 

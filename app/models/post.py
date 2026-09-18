@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -27,6 +27,17 @@ class Post(Base):
             "status",
             text("published_at DESC"),
             "id",
+        ),
+        # Full-text search + fuzzy-match indexes (#19). Declared on the model so
+        # alembic autogenerate sees exactly the indexes migration f3a1b2c3d4e5
+        # creates, instead of proposing to drop them on every diff.
+        Index("ix_posts_slug", "slug"),
+        Index("ix_posts_search_vector", "search_vector", postgresql_using="gin"),
+        Index(
+            "ix_posts_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
         ),
     )
 
@@ -59,6 +70,9 @@ class Post(Base):
     word_count: Mapped[int | None] = mapped_column(nullable=True)
     reading_time_minutes: Mapped[int | None] = mapped_column(nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # search fields (#19)
+    search_vector: Mapped[str | None] = mapped_column(TSVECTOR(), nullable=True)
 
     # review fields (#16)
     publish_at: Mapped[datetime | None] = mapped_column(nullable=True)

@@ -45,6 +45,15 @@ Visit the link to see what it can do, or pass it as a Bearer token.
 
     Authorization: Bearer cap_abc123_not_real
 
+## Search — check before writing
+
+Before creating, search for existing content:
+
+    GET /v1/search?q=your+topic&site=blog
+    GET /v1/search?q=your+topic&format=ids  — cheapest duplicate check ({id,slug} only)
+
+Filters: q, site, status, tag, author_label, from, to, limit, cursor.
+
 ## The 5 canonical calls
 
 ### 1. Create a draft post
@@ -173,6 +182,11 @@ def build_instruction_sheet(base_url: str) -> str:
         "  POST   /v1/posts/{id}/publish         — publish (idempotent)\n"
         "  DELETE /v1/posts/{id}                 — trash\n"
         "  POST   /v1/posts/{id}/unpublish       — revert to draft\n"
+        "\n"
+        "Search & filtering:\n"
+        "  GET /v1/search?q=...&site=...&status=...  — full-text search\n"
+        "  GET /v1/search?q=...&format=ids           — cheap duplicate check\n"
+        "  GET /v1/sites/{site}/tags                  — list tags with counts\n"
         "\n"
         "Auth: Bearer token or capability link (see /c/{token}).\n"
         "Errors: application/problem+json — read the `hint` field.\n"

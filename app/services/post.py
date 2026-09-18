@@ -401,6 +401,11 @@ def list_posts(
     site_slug: str,
     *,
     status: str | None = None,
+    tag: str | None = None,
+    author_label: str | None = None,
+    updated_since: datetime | None = None,
+    published_after: datetime | None = None,
+    published_before: datetime | None = None,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
 ) -> tuple[list[Post], str | None]:
@@ -420,6 +425,25 @@ def list_posts(
 
     if status:
         query = query.filter(Post.status == status)
+
+    if tag:
+        query = (
+            query.join(PostTag, PostTag.post_id == Post.id)
+            .join(Tag, Tag.id == PostTag.tag_id)
+            .filter(Tag.slug == tag)
+        )
+
+    if author_label:
+        query = query.filter(Post.author_label == author_label)
+
+    if updated_since:
+        query = query.filter(Post.updated_at >= updated_since)
+
+    if published_after:
+        query = query.filter(Post.published_at >= published_after)
+
+    if published_before:
+        query = query.filter(Post.published_at <= published_before)
 
     # Cursor pagination: cursor encodes (sort_key, id) where sort_key is
     # published_at ISO format (or empty for nulls) and id is the post UUID.

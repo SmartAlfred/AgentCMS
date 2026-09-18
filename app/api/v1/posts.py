@@ -353,13 +353,29 @@ def list_posts_endpoint(
     db: DbSession,
     auth: AuthContext = Depends(require_auth),
     status: str | None = Query(None, description="Filter by status"),
+    tag: str | None = Query(None, description="Filter by tag slug"),
+    author_label: str | None = Query(None, description="Filter by author label"),
+    updated_since: str | None = Query(None, description="Updated since (ISO-8601)"),
+    published_after: str | None = Query(None, description="Published after (ISO-8601)"),
+    published_before: str | None = Query(None, description="Published before (ISO-8601)"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     cursor: str | None = Query(None),
 ) -> PostListResponse:
+    from datetime import datetime
+
+    parsed_updated_since = datetime.fromisoformat(updated_since) if updated_since else None
+    parsed_published_after = datetime.fromisoformat(published_after) if published_after else None
+    parsed_published_before = datetime.fromisoformat(published_before) if published_before else None
+
     items, next_cursor = list_posts(
         db,
         site_slug,
         status=status,
+        tag=tag,
+        author_label=author_label,
+        updated_since=parsed_updated_since,
+        published_after=parsed_published_after,
+        published_before=parsed_published_before,
         limit=limit,
         cursor=cursor,
     )

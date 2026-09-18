@@ -233,8 +233,14 @@ def verify_token(
 # ---------------------------------------------------------------------------
 
 _METHOD_SCOPE_MAP: dict[str, dict[str, str]] = {
-    "GET": {"posts": "posts:read", "sites": "sites:read", "assets": "posts:read"},
-    "POST": {"posts": "posts:write"},
+    "GET": {
+        "posts": "posts:read",
+        "sites": "sites:read",
+        "assets": "posts:read",
+        "tags": "posts:read",
+        "search": "posts:read",
+    },
+    "POST": {"posts": "posts:write", "tags": "posts:write"},
     "PATCH": {"posts": "posts:write"},
     "DELETE": {"posts": "posts:write"},
 }
@@ -266,7 +272,7 @@ def scope_for_endpoint(method: str, path: str) -> str | None:
     resource = "posts"
     for part in reversed(parts):
         # Skip path parameters (UUIDs or slugs that look like IDs)
-        if part in ("posts", "sites", "assets"):
+        if part in ("posts", "sites", "assets", "tags", "search"):
             resource = part
             break
 

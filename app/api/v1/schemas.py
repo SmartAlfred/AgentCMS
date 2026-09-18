@@ -318,3 +318,86 @@ class TrustModeRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     expires_in_minutes: int = Field(default=60, ge=1, le=1440)
+
+
+# ---------------------------------------------------------------------------
+# Search schemas (#19)
+# ---------------------------------------------------------------------------
+
+
+class SearchResultItem(BaseModel):
+    """Single search result."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    slug: str
+    status: str
+    published_at: datetime | None = None
+    snippet: str
+    score: float | None = None
+    url: str
+    markdown_url: str
+
+
+class SearchResultIdItem(BaseModel):
+    """Lightweight search result for ?format=ids."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    slug: str
+
+
+class SearchResponse(BaseModel):
+    """Full-text search response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    results: list[SearchResultItem] | list[SearchResultIdItem]
+    total_estimate: int
+    next_cursor: str | None = None
+    query: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Tag schemas (#19)
+# ---------------------------------------------------------------------------
+
+
+class TagRead(BaseModel):
+    """Tag with post count."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    slug: str
+    name: str
+    post_count: int
+    created_at: datetime
+
+
+class TagListResponse(BaseModel):
+    """List of tags with counts."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[TagRead]
+    count: int
+
+
+class TagMergeRequest(BaseModel):
+    """Request body for POST /v1/sites/{site}/tags/{tag}/merge."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    target_tag: str
+
+
+class TagMergeResponse(BaseModel):
+    """Response from tag merge."""
+
+    source_tag: str
+    target_tag: str
+    affected_posts: int

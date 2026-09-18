@@ -40,6 +40,8 @@ AgentCMS is a CMS whose first user is an AI agent.
 TAGS_METADATA = [
     {"name": "ops", "description": "Liveness and readiness. Unauthenticated."},
     {"name": "posts", "description": "Create, read, update, publish, unpublish and trash posts."},
+    {"name": "search", "description": "Full-text search with faceted filters."},
+    {"name": "tags", "description": "Tag listing with counts and merge."},
     {"name": "sites", "description": "Content containers (site slug, publish mode)."},
 ]
 

@@ -12,6 +12,9 @@ PATCH  /v1/posts/{id}                         update (partial)
 POST   /v1/posts/{id}/publish                 publish
 POST   /v1/posts/{id}/unpublish               take down
 DELETE /v1/posts/{id}                         trash (recoverable)
+GET    /v1/search                             full-text search with filters
+GET    /v1/sites/{site}/tags                  list tags with counts
+POST   /v1/sites/{site}/tags/{tag}/merge      merge tags (admin)
 ```
 
 ## Create a post
@@ -150,3 +153,109 @@ All errors are `application/problem+json` (RFC 9457):
   "request_id": "req-abc-123"
 }
 ```
+
+## Full-text search
+
+```bash
+curl "http://localhost:8000/v1/search?q=python+deployment&site=blog&status=published"
+```
+
+Response:
+
+```json
+{
+  "results": [
+    {
+      "id": "...",
+      "title": "Python Deployment Guide",
+      "slug": "python-deployment-guide",
+      "status": "published",
+      "published_at": "2026-01-15T00:00:00Z",
+      "snippet": "Use Docker for Python deployment...",
+      "score": 0.95,
+      "url": "/posts/python-deployment-guide",
+      "markdown_url": "/posts/python-deployment-guide.md"
+    }
+  ],
+  "total_estimate": 1,
+  "next_cursor": null,
+  "query": "python deployment"
+}
+```
+
+### Query parameters
+
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `q` | string | null | Full-text search query (empty = list-with-filters) |
+| `site` | string | null | Filter by site slug |
+| `status` | string | null | Filter by status |
+| `tag` | string | null | Filter by tag slug |
+| `author_label` | string | null | Filter by author label |
+| `from` | string | null | Created after (ISO-8601) |
+| `to` | string | null | Created before (ISO-8601) |
+| `published_after` | string | null | Published after (ISO-8601) |
+| `published_before` | string | null | Published before (ISO-8601) |
+| `updated_since` | string | null | Updated since (ISO-8601) |
+| `limit` | int | 20 | 1–100 |
+| `cursor` | string | null | Pass `next_cursor` from previous response |
+| `format` | string | null | `ids` for lightweight `{id, slug}` results |
+
+### Cheap duplicate check
+
+Use `?format=ids` for the cheapest "have I written this?" call:
+
+```bash
+curl "http://localhost:8000/v1/search?q=my+topic&format=ids"
+```
+
+Response:
+
+```json
+{
+  "results": [{"id": "...", "slug": "my-topic"}],
+  "total_estimate": 1,
+  "next_cursor": null,
+  "query": "my topic"
+}
+```
+
+## Tags
+
+### List tags with counts
+
+```bash
+curl http://localhost:8000/v1/sites/blog/tags
+```
+
+Response:
+
+```json
+{
+  "items": [
+    {"id": "...", "slug": "python", "name": "Python", "post_count": 5, "created_at": "..."},
+    {"id": "...", "slug": "fastapi", "name": "Fastapi", "post_count": 2, "created_at": "..."}
+  ],
+  "count": 2
+}
+```
+
+### Merge tags (admin)
+
+```bash
+curl -X POST http://localhost:8000/v1/sites/blog/tags/python/merge \
+  -H "Content-Type: application/json" \
+  -d '{"target_tag": "programming"}'
+```
+
+Response:
+
+```json
+{
+  "source_tag": "python",
+  "target_tag": "programming",
+  "affected_posts": 5
+}
+```
+
+Tag merge rewrites `post_tags` for all affected posts. Tag changes do NOT create content revisions but emit audit events per affected post.
