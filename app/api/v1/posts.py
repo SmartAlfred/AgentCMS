@@ -31,6 +31,8 @@ import json
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, require_auth
@@ -58,6 +60,7 @@ from app.services.post import (
     unpublish_post,
     update_post,
 )
+from app.services.validation import validate_post
 
 from .schemas import (
     DiffResponse,
@@ -65,15 +68,62 @@ from .schemas import (
     PostListResponse,
     PostRead,
     PostUpdate,
+    PostWriteRequest,
     RevertRequest,
     RevisionListResponse,
     RevisionMetadata,
     RevisionSnapshot,
+    ValidationNormalised,
+    ValidationResponse,
+    ValidationStats,
+    WouldCreate,
+)
+from .schemas import (
+    ValidationError as ValidationErrorSchema,
 )
 
 router = APIRouter()
 
 DbSession = Annotated[Session, Depends(get_db)]
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/posts/validate — dry-run validation (#15)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/posts/validate",
+    summary="Validate a post payload without persisting",
+    tags=["posts"],
+    response_model=ValidationResponse,
+)
+def validate_post_endpoint(
+    body: PostWriteRequest,
+    request: Request,
+    db: DbSession,
+    auth: AuthContext = Depends(require_auth),
+    site_slug: str = Query(..., description="Site slug to validate against"),
+) -> ValidationResponse:
+    result = validate_post(
+        db,
+        site_slug=site_slug,
+        body_md=body.body_md,
+        title=body.title,
+        slug=body.slug,
+        tags=body.tags,
+        excerpt=body.excerpt,
+        frontmatter=body.frontmatter,
+        check_links=True,
+    )
+    return ValidationResponse(
+        valid=result.valid,
+        normalised=ValidationNormalised(**result.normalised),
+        would_create=WouldCreate(**result.would_create) if result.would_create else None,
+        errors=[ValidationErrorSchema(**e) for e in result.errors],
+        warnings=result.warnings,
+        stats=ValidationStats(**result.stats),
+    )
 
 
 def _negotiate_response(
@@ -115,6 +165,22 @@ def _negotiate_response(
     )
 
 
+def _enforce_create_contract(body: PostWriteRequest) -> PostCreate:
+    """Re-validate a lenient write body against the strict create contract.
+
+    ``POST /v1/sites/{site}/posts`` accepts :class:`PostWriteRequest` so that
+    ``?dry_run=true`` can *report* a problem instead of failing with a
+    framework 422. Anything that actually writes must still satisfy
+    :class:`PostCreate`; violations are re-raised as a FastAPI
+    ``RequestValidationError`` so the response stays the documented
+    ``422 problem+json`` with aggregated field errors.
+    """
+    try:
+        return PostCreate.model_validate(body.model_dump(exclude_none=True))
+    except PydanticValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
 def _extract_idempotency_key(request: Request, idempotency_key: str | None) -> str | None:
     """Extract idempotency key from header or query parameter."""
     # Prefer header, fall back to query parameter
@@ -145,7 +211,7 @@ def _warn_no_idempotency_key(post_data: dict[str, Any]) -> None:
 )
 def create_post_endpoint(
     site_slug: str,
-    body: PostCreate,
+    body: PostWriteRequest,
     request: Request,
     db: DbSession,
     auth: AuthContext = Depends(require_auth),
@@ -155,15 +221,37 @@ def create_post_endpoint(
     ),
 ) -> Response:
     if dry_run:
+        result = validate_post(
+            db,
+            site_slug=site_slug,
+            body_md=body.body_md,
+            title=body.title,
+            slug=body.slug,
+            tags=body.tags,
+            excerpt=body.excerpt,
+            frontmatter=body.frontmatter,
+            check_links=True,
+        )
         return Response(
-            content='{"dry_run": true}',
+            content=ValidationResponse(
+                valid=result.valid,
+                normalised=ValidationNormalised(**result.normalised),
+                would_create=WouldCreate(**result.would_create) if result.would_create else None,
+                errors=[ValidationErrorSchema(**e) for e in result.errors],
+                warnings=result.warnings,
+                stats=ValidationStats(**result.stats),
+            ).model_dump_json(),
             status_code=201,
             media_type="application/json",
         )
 
+    # Everything below can persist — enforce the strict create contract first
+    # (dry-run callers already returned above with a structured report).
+    create_body = _enforce_create_contract(body)
+
     key = _extract_idempotency_key(request, idempotency_key)
     # Use Pydantic serialization for consistent fingerprinting
-    body_bytes = body.model_dump_json().encode()
+    body_bytes = create_body.model_dump_json().encode()
 
     # Idempotency check
     idem_result = None
@@ -189,12 +277,12 @@ def create_post_endpoint(
     post, norm_warnings = create_post(
         db,
         site_slug,
-        body_md=body.body_md,
-        title=body.title,
-        slug=body.slug,
-        tags=body.tags,
-        excerpt=body.excerpt,
-        frontmatter=body.frontmatter,
+        body_md=create_body.body_md,
+        title=create_body.title,
+        slug=create_body.slug,
+        tags=create_body.tags,
+        excerpt=create_body.excerpt,
+        frontmatter=create_body.frontmatter,
         actor_id=auth.actor_id,
         audit_ctx={
             "actor_label": auth.label,
@@ -207,9 +295,9 @@ def create_post_endpoint(
 
     data = _post_to_dict(post, site_slug, session=db)
     warnings: list[str] = list(norm_warnings)
-    if body.title is None:
+    if create_body.title is None:
         warnings.append("Title was derived from the first H1 in body_md.")
-    if body.slug is None:
+    if create_body.slug is None:
         warnings.append("Slug was derived from the title.")
     if key is None:
         warnings.append("No Idempotency-Key supplied. Duplicate protection is opt-in for this client.")
@@ -341,10 +429,37 @@ def update_post_endpoint(
     if dry_run:
         post = get_post(db, identifier)
         site_slug = post.site.slug if post.site else "blog"
-        data = _post_to_dict(post, site_slug, session=db)
-        renderer = MarkdownRenderer()
-        body_html = renderer.render_html(post.body_md)
-        return _negotiate_response(request, data, body_html=body_html)
+        # Merge the update body onto existing post data for validation
+        merged_body_md = body.body_md if body.body_md is not None else post.body_md
+        merged_title = body.title if body.title is not None else post.title
+        merged_slug = body.slug if body.slug is not None else post.slug
+        merged_tags = body.tags if body.tags is not None else None
+        merged_excerpt = body.excerpt if body.excerpt is not None else post.excerpt
+        merged_frontmatter = body.frontmatter if body.frontmatter is not None else post.frontmatter
+        result = validate_post(
+            db,
+            site_slug=site_slug,
+            body_md=merged_body_md,
+            title=merged_title,
+            slug=merged_slug,
+            tags=merged_tags,
+            excerpt=merged_excerpt,
+            frontmatter=merged_frontmatter,
+            existing_post_id=identifier,
+            check_links=True,
+        )
+        return Response(
+            content=ValidationResponse(
+                valid=result.valid,
+                normalised=ValidationNormalised(**result.normalised),
+                would_create=WouldCreate(**result.would_create) if result.would_create else None,
+                errors=[ValidationErrorSchema(**e) for e in result.errors],
+                warnings=result.warnings,
+                stats=ValidationStats(**result.stats),
+            ).model_dump_json(),
+            status_code=200,
+            media_type="application/json",
+        )
 
     key = _extract_idempotency_key(request, idempotency_key)
     # Use Pydantic serialization for consistent fingerprinting

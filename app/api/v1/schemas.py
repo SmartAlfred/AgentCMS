@@ -28,6 +28,25 @@ class PostCreate(BaseModel):
     frontmatter: dict[str, Any] | None = None
 
 
+class PostWriteRequest(BaseModel):
+    """Lenient request body for ``?dry_run=true`` and ``/v1/posts/validate``.
+
+    Identical to :class:`PostCreate` except that **every** field is optional,
+    so a caller can hand over an incomplete or empty payload and get a
+    structured validation report back instead of a framework-level 422.
+    Real writes are still checked against the strict ``PostCreate`` contract.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str | None = None
+    body_md: str | None = None
+    slug: str | None = None
+    tags: list[str] | None = None
+    excerpt: str | None = None
+    frontmatter: dict[str, Any] | None = None
+
+
 class PostUpdate(BaseModel):
     """Request body for ``PATCH /v1/posts/{id}``.
 
@@ -169,3 +188,60 @@ class DiffResponse(BaseModel):
     to_revision: int
     diff_unified: str
     identical: bool
+
+
+# ---------------------------------------------------------------------------
+# Validation schemas (#15)
+# ---------------------------------------------------------------------------
+
+
+class ValidationError(BaseModel):
+    """A single field-level validation error."""
+
+    field: str
+    code: str
+    message: str
+
+
+class WouldCreate(BaseModel):
+    """Preview of what would be created on a real write."""
+
+    slug: str
+    status: str
+    url: str
+
+
+class ValidationStats(BaseModel):
+    """Content statistics computed during validation."""
+
+    word_count: int
+    reading_time_minutes: int
+    links: int
+    images: int
+
+
+class ValidationNormalised(BaseModel):
+    """Preview of the normalised payload that would be stored."""
+
+    body_md: str
+    title: str | None = None
+    slug: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    excerpt: str | None = None
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidationResponse(BaseModel):
+    """Response from POST /v1/posts/validate and ?dry_run=true.
+
+    ``dry_run`` keeps the pre-#15 ``{"dry_run": true}`` contract that callers
+    already rely on, alongside the richer validation report.
+    """
+
+    dry_run: bool = True
+    valid: bool
+    normalised: ValidationNormalised
+    would_create: WouldCreate | None = None
+    errors: list[ValidationError] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    stats: ValidationStats
