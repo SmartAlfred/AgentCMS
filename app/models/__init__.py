@@ -12,6 +12,7 @@ from app.models.idempotency_key import IdempotencyKey
 from app.models.post import Post
 from app.models.post_revision import PostRevision
 from app.models.redirect import Redirect
+from app.models.review import Review
 from app.models.site import Site
 from app.models.tag import PostTag, Tag
 from app.models.webhook import Webhook, WebhookDelivery
@@ -26,6 +27,7 @@ __all__ = [
     "PostRevision",
     "PostTag",
     "Redirect",
+    "Review",
     "Site",
     "Tag",
     "Webhook",

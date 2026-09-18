@@ -69,6 +69,7 @@ from .schemas import (
     PostRead,
     PostUpdate,
     PostWriteRequest,
+    PublishAcceptedResponse,
     RevertRequest,
     RevisionListResponse,
     RevisionMetadata,
@@ -565,6 +566,8 @@ def publish_post_endpoint(
     auth: AuthContext = Depends(require_auth),
     idempotency_key: str | None = Query(None, description="Idempotency key"),
     if_match: str | None = Header(None, alias="If-Match"),
+    publish_at: str | None = Query(None, description="Schedule publish (ISO-8601)"),
+    unpublish_at: str | None = Query(None, description="Schedule unpublish (ISO-8601)"),
 ) -> Response:
     key = _extract_idempotency_key(request, idempotency_key)
 
@@ -613,6 +616,42 @@ def publish_post_endpoint(
     # ETag
     etag = compute_etag(post.content_hash, post.revision_count)
     response_headers: dict[str, str] = {"ETag": etag}
+
+    # If the post is now pending_review, return 202
+    if post.status == "pending_review":
+        from app.services.preview import create_preview_token
+
+        preview_url = f"/{site_slug}/{post.slug}?preview={create_preview_token(post.id)}"
+        review_id = str(post.review_id) if post.review_id else ""
+
+        response_body = PublishAcceptedResponse(
+            status="pending_review",
+            review_id=review_id,
+            expected_decision_within="24h",
+            next=f"GET /v1/posts/{post.id} to check status",
+            preview_url=preview_url,
+        ).model_dump()
+
+        serialized_body = response_body
+
+        # Complete idempotency record
+        if idem_result is not None and idem_result.record is not None:
+            complete_idempotency(
+                db,
+                idem_result.record,
+                request_id=getattr(request.state, "request_id", "-"),
+                status_code=202,
+                body=serialized_body,
+                headers=response_headers,
+            )
+        db.commit()
+
+        return Response(
+            content=json.dumps(response_body),
+            status_code=202,
+            media_type="application/json",
+            headers=response_headers,
+        )
 
     # Serialize response body for idempotency storage
     serialized_body = PostRead(**data).model_dump(mode="json")

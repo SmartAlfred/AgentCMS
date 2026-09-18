@@ -60,9 +60,29 @@ class Post(Base):
     reading_time_minutes: Mapped[int | None] = mapped_column(nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
+    # review fields (#16)
+    publish_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    review_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("reviews.id", ondelete="SET NULL"), nullable=True
+    )
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("actors.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     # relationships
     site = relationship("Site", back_populates="posts", lazy="noload")
     revisions = relationship(
         "PostRevision", back_populates="post", lazy="selectin", order_by="PostRevision.revision.desc()"
     )
     tag_links = relationship("PostTag", back_populates="post", lazy="noload")
+    review = relationship(
+        "Review",
+        back_populates="post",
+        lazy="noload",
+        uselist=False,
+        foreign_keys="[Review.post_id]",
+        primaryjoin="Post.id == Review.post_id",
+    )

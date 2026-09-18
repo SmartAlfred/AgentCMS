@@ -88,10 +88,13 @@ class PostRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     published_at: datetime | None = None
+    publish_at: datetime | None = None
+    unpublish_at: datetime | None = None
     word_count: int | None = None
     reading_time_minutes: int | None = None
     content_hash: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    review: dict[str, Any] | None = None
 
 
 class PostListResponse(BaseModel):
@@ -245,3 +248,73 @@ class ValidationResponse(BaseModel):
     errors: list[ValidationError] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     stats: ValidationStats
+
+
+# ---------------------------------------------------------------------------
+# Review schemas (#16)
+# ---------------------------------------------------------------------------
+
+
+class PublishAcceptedResponse(BaseModel):
+    """202 response when publish enters the review queue."""
+
+    status: str = "pending_review"
+    review_id: str
+    expected_decision_within: str = "24h"
+    next: str = "GET /v1/posts/{id} to check status"
+    preview_url: str
+
+
+class ReviewRead(BaseModel):
+    """Single review in the admin review queue."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    post_id: str
+    site_id: str
+    requested_by_actor_id: str
+    status: str
+    comment: str | None = None
+    reject_reason: str | None = None
+    reviewed_by_actor_id: str | None = None
+    decided_at: datetime | None = None
+    preview_token: str | None = None
+    snapshot_title: str | None = None
+    snapshot_diff: str | None = None
+    created_at: datetime
+
+
+class ReviewListResponse(BaseModel):
+    """Cursor-paginated list of pending reviews."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[ReviewRead]
+    next_cursor: str | None = None
+    count: int
+
+
+class ReviewApproveRequest(BaseModel):
+    """Request body for POST /v1/admin/reviews/{id}/approve."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    comment: str | None = None
+    edits: dict[str, Any] | None = None
+
+
+class ReviewRejectRequest(BaseModel):
+    """Request body for POST /v1/admin/reviews/{id}/reject."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str
+
+
+class TrustModeRequest(BaseModel):
+    """Request body for POST /v1/admin/sites/{slug}/trust-mode."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    expires_in_minutes: int = Field(default=60, ge=1, le=1440)

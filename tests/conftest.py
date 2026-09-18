@@ -25,6 +25,7 @@ TRUNCATE_CANDIDATES = (
     "post_tags",
     "tags",
     "post_revisions",
+    "reviews",
     "posts",
     "sites",
     "actors",

@@ -203,10 +203,29 @@ def _post_to_dict(post: Post, site_slug: str, *, session: Session | None = None)
         "created_at": post.created_at,
         "updated_at": post.updated_at,
         "published_at": post.published_at,
+        "publish_at": post.publish_at,
+        "unpublish_at": post.unpublish_at,
         "word_count": post.word_count,
         "reading_time_minutes": post.reading_time_minutes,
         "content_hash": post.content_hash,
+        "review": _review_summary(post) if post.review_status else None,
     }
+
+
+def _review_summary(post: Post) -> dict[str, Any] | None:
+    """Build a review summary dict for the post response."""
+    if not post.review_status:
+        return None
+    summary: dict[str, Any] = {"status": post.review_status}
+    if post.review_comment is not None:
+        summary["comment"] = post.review_comment
+    if post.reviewed_at:
+        summary["decided_at"] = post.reviewed_at
+    if post.reviewed_by_actor_id:
+        summary["decided_by"] = str(post.reviewed_by_actor_id)
+    if post.review_id:
+        summary["review_id"] = str(post.review_id)
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +559,14 @@ def publish_post(
     source: str = "api",
     audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
-    """Publish a draft post.  Idempotent — publishing twice is a no-op."""
+    """Publish a draft post.
+
+    If the site requires review (``publish_mode == "require_review"`` and
+    trust mode is not active), the post enters ``pending_review`` instead
+    of being immediately published.
+
+    Idempotent — publishing twice returns the same post with warnings.
+    """
     post = _resolve_post(session, post_id)
     warnings: list[str] = []
 
@@ -548,12 +574,40 @@ def publish_post(
         warnings.append(f"Post '{post.slug}' is already published; no change made.")
         return post, warnings
 
-    if post.status not in ("draft", "pending_review"):
+    if post.status == "pending_review":
+        warnings.append(f"Post '{post.slug}' is pending review; publish request queued.")
+        return post, warnings
+
+    if post.status not in ("draft",):
         raise InvalidTransitionError(
             "publish",
             post.status,
-            allowed_from=["draft", "pending_review"],
+            allowed_from=["draft"],
         )
+
+    # Check if site requires review
+    from app.models.site import Site as SiteModel
+
+    site = session.query(SiteModel).filter(SiteModel.id == post.site_id).first()
+    if site is not None:
+        from app.services.review import site_requires_review
+
+        if site_requires_review(site):
+            from app.services.review import create_review
+
+            review = create_review(
+                session,
+                post=post,
+                site=site,
+                actor_id=actor_id,
+                source=source,
+                audit_ctx=audit_ctx,
+            )
+            warnings.append(
+                f"Post '{post.slug}' submitted for review (review_id: {review.id}). "
+                "The post is not publicly visible until approved."
+            )
+            return post, warnings
 
     post.status = "published"
     post.published_at = datetime.now(UTC)
