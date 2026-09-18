@@ -358,3 +358,110 @@ EXIF (including GPS) is stripped automatically.
 
 Immutable, content-hashed URLs: `/media/{sha256}/{filename}`.
 Cache-Control: `public, max-age=31536000, immutable`.
+
+## Static export (ticket #23)
+
+`GET /v1/sites/{site}/export` returns a deterministic archive of the site's
+static bundle for GitHub Pages hosting.  Two runs against the same database
+produce byte-identical archives (feeds, sitemap, manifest, tar metadata, and
+gzip headers are all pinned).
+
+Requires a token with the `sites:read` scope.
+
+```bash
+curl -o blog-export.tar.gz \
+  http://localhost:8000/v1/sites/blog/export \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/gzip"
+
+# ZIP variant
+curl -o blog-export.zip \
+  http://localhost:8000/v1/sites/blog/export?format=zip \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Query parameters
+
+| Param    | Type  | Default   | Description                                                              |
+| -------- | ----- | --------- | ------------------------------------------------------------------------ |
+| `format` | enum  | `tar.gz`  | `tar.gz` (application/gzip) or `zip` (application/zip)                    |
+| `since`  | ISO-8601 | none   | Return a **delta** bundle: only the post files whose `updated_at` falls   |
+|          |       |           | after this timestamp (plus `manifest.json`), so a pull-based static host  |
+|          |       |           | can merge only what changed.                                              |
+
+### HTTP responses
+
+| Status | Meaning                                                        |
+| ------ | -------------------------------------------------------------- |
+| 200    | Archive bytes; `Content-Disposition: attachment`               |
+| 400    | `since` is not a valid ISO-8601 timestamp                       |
+| 401    | missing/invalid bearer token                                    |
+| 403    | token lacks `sites:read`                                        |
+| 404    | site slug does not exist                                        |
+
+### Base URL
+
+Links in the export use `site.base_url`.  If the site has none, the request
+host is used.  Loopback / private / link-local hosts (`localhost`, `127.x`,
+`10.x`, `192.168.x`, `.local`, …) are rejected with `422` because they would
+leak into the static files.
+
+### Bundle layout
+
+```
+index.html                    site index (paginated, mirrors GET /{site})
+page/{n}/index.html           further index pages
+posts/{slug}/index.html       post page (byte-identical to the live HTML)
+posts/{slug}/index.md         raw markdown
+posts/{slug}/index.json       post JSON (includes real tags)
+tags/{tag}/index.html         tag-filtered index pages
+media/{sha256}/{name}         content-hashed media (from media_root)
+rss.xml  atom.xml  feed.json  feeds
+sitemap.xml  robots.txt 404.html
+manifest.json                 machine-readable index (below)
+.nojekyll                     tells GitHub Pages not to run Jekyll
+```
+
+### manifest.json
+
+```json
+{
+  "schema": "agentcms-export/v1",
+  "renderer_version": "agentcms-export-v1",
+  "generated_at": "2026-09-18T12:00:00Z",
+  "site": {"slug": "blog", "name": "Agent CMS", "base_url": "https://blog.example.com"},
+  "stats": {"posts": 1, "files": 21},
+  "since": null,
+  "content": {
+    "hello-world": {
+      "slug": "hello-world",
+      "render_hash": "sha256-of-rendering-inputs",
+      "content_hash": "post.content_hash",
+      "published_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "files": ["posts/hello-world/index.html", "posts/hello-world/index.md", "posts/hello-world/index.json"]
+    }
+  },
+  "files": {
+    "index.html": "sha256",
+    "posts/hello-world/index.html": "sha256"
+  }
+}
+```
+
+`content[slug].render_hash` drives incremental reuse; `files` maps every
+relative path to its SHA-256 so `agentcms export --verify` can detect
+drift/corruption.
+
+### CLI
+
+```bash
+python -m scripts.cli export --site=blog --out=dist --base-url=https://blog.example.com
+python -m scripts.cli export --out=dist --verify        # standalone verify
+python -m scripts.cli export --site=blog --out=dist --incremental
+python -m scripts.cli export --deploy=github-pages --repo=owner/repo --out=dist --dry-run
+```
+
+`--dry-run` prints the deploy plan; the real push is done by the `docs/ci/github-pages.yml`
+workflow or by running the plan locally (review it first — it force-pushes to
+the `gh-pages` branch).

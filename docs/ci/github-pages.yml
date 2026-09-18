@@ -1,0 +1,63 @@
+name: Publish static export to GitHub Pages
+
+# Two triggers:
+# 1. workflow_dispatch - rebuild from the default branch manually.
+# 2. repository_dispatch - an AgentCMS webhook (published event) asks us to
+#    rebuild the blog.  Use `webhook` to create a webhook with
+#    `event_types: ["post.published"]` and point it at the GitHub
+#    Repository Dispatch URL (`/repos/{owner}/{repo}/dispatches`); send
+#    `{"event_type": "post.published"}`.  This is the pull-based hosting
+#    path the static export (#23) is designed for: the export bundle is
+#    rebuilt on every publish and pushed to the `gh-pages` branch.
+#
+# The export needs one secret: `DATABASE_URL`, a read-only DSN for the
+# AgentCMS database.  `SITE_SLUG` and `BASE_URL` are repository variables
+# (or edit the defaults below).
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [post.published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: true
+
+jobs:
+  export-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install AgentCMS
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Build the static export
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SITE_SLUG: ${{ vars.SITE_SLUG || 'blog' }}
+          BASE_URL: ${{ vars.BASE_URL }}
+        run: |
+          agentcms export \
+            --site "$SITE_SLUG" \
+            --out dist \
+            --base-url "$BASE_URL" \
+            --verify
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          force_orphan: true

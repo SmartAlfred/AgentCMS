@@ -30,6 +30,9 @@ dev = [
     "mypy>=1.11",
 ]
 
+[project.scripts]
+agentcms = "scripts.cli:main"
+
 [tool.setuptools]
 packages = ["app", "app.api", "app.api.v1", "app.db", "app.models", "app.domain", "app.services", "app.utils", "app.dashboard", "scripts"]
 
