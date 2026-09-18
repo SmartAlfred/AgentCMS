@@ -78,6 +78,46 @@ class Settings(BaseSettings):
     capability_rate_limit_window_seconds: int = 60
     capability_max_live_links_per_site: int = 100
 
+    # -- observability (#24) -------------------------------------------------
+    # Structured JSON request logs (one line per request). Set to "json" to
+    # emit machine-readable logs.  Default keeps a readable text format for
+    # local development.
+    log_format: str = "json"
+    # Shared secret required on GET /metrics (admin-auth).  Empty = metrics
+    # served to any authenticated admin token; never expose /metrics publicly.
+    metrics_token: str = ""
+    # Base URL of the OTLP endpoint (e.g. http://jaeger:4318).  Empty =
+    # tracing is soft-disabled (no export), which keeps the hot path cheap.
+    otlp_endpoint: str = ""
+    # Service name reported as the OTel ``service.name`` resource attribute.
+    otel_service_name: str = "agentcms"
+    # Trace sampling rate for normal requests (0.1 = 10 %).  Errors are always
+    # sampled regardless of this value.
+    trace_sample_ratio: float = 0.1
+    # Inject synthetic build metadata (git sha / build time) for /v1/version.
+    # In a container these are baked in at build time; locally we fall back to
+    # git + filesystem timestamps automatically, so this is optional.
+    git_sha: str = ""
+    build_time: str = ""
+
+    # -- backups & object storage (#24) --------------------------------------
+    # Where nightly pg_dump backups are written. Supports:
+    #   file:///absolute/path   (local directory, also the restore-drill default)
+    #   s3://bucket/prefix      (S3-compatible object storage)
+    # Empty = backups disabled.
+    backup_store_url: str = ""
+    # Local directory backups are written to when BACKUP_STORE_URL is empty.
+    backup_dir: str = ".backups"
+    # Passphrase used to encrypt/decrypt dumps (AES-256).  Must be set (or
+    # inherited from the environment) for `make backup` to run.
+    backup_passphrase: str = ""
+    # Retention in days/months: keep 30 daily + 12 monthly snapshots.
+    backup_retention_daily: int = 30
+    backup_retention_monthly: int = 12
+    # A static database to diff a restore against in dry-run/restore-drill
+    # mode (usually "production").  Empty = diff against the DATABASE_URL.
+    backup_source_url: str = ""
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:

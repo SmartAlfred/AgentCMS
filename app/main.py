@@ -61,6 +61,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
 
+    from app.observability import configure_observability
+
+    configure_observability(settings)
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -94,6 +98,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_error_handlers(app)
 
     app.include_router(health_router)
+    from app.api.observability import router as observability_router
+
+    app.include_router(observability_router)
     if settings.docs_enabled:
         app.include_router(docs_router)
     app.include_router(llms_router)

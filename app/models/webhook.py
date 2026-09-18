@@ -43,6 +43,7 @@ class WebhookDelivery(Base):
     )
     event: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     response_status: Mapped[int | None] = mapped_column(nullable=True)
     response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)

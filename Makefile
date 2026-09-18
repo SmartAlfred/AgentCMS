@@ -175,3 +175,39 @@ if errors: \
     print(f'FAILED: {errors} hash chain violations detected'); sys.exit(1); \
 else: \
     print(f'OK: {len(rows)} events verified, hash chain intact')" 2>&1
+
+# --- Backups & restore drill (#24) -------------------------------------------
+
+.PHONY: backup
+backup: install ## Run the nightly encrypted pg_dump backup (+ retention)
+	$(PY) -m scripts.backup
+
+.PHONY: restore-drill
+restore-drill: install ## Restore the latest backup into a scratch DB and diff content hashes
+	$(PY) -m scripts.restore_drill
+
+.PHONY: alert-rules
+alert-rules: ## Regenerate docs/ops/prometheus-rules.yml from app/observability/alerts.py
+	@$(PY) -c "from app.observability.alerts import render_promql_rules; import pathlib; pathlib.Path('docs/ops/prometheus-rules.yml').write_text(render_promql_rules())"
+	@echo "==> regenerated docs/ops/prometheus-rules.yml"
+
+# --- Deployment (#24) --------------------------------------------------------
+
+.PHONY: preflight-migrations
+preflight-migrations: install ## Dry-run: no pending migrations -> zero-downtime redeploy is safe
+	@$(ALEMBIC) upgrade head --sql 2>/dev/null; \
+	if $(ALEMBIC) check 2>&1 | grep -qi 'New upgrade operation'; then \
+		echo "==> PENDING MIGRATIONS DETECTED" >&2; exit 1; \
+	fi; \
+	echo "==> no pending migrations; rollout may proceed"
+
+.PHONY: deploy
+deploy: install ## Migration-gated rolling deploy: scripts/deploy.sh
+	@TAG=$${TAG:-agentcms:deploy} ./scripts/deploy.sh
+
+.PHONY: rollback
+rollback: install ## One-command rollback to the previous image: scripts/deploy.sh --rollback
+	@TAG=$${TAG:-agentcms:deploy} ./scripts/deploy.sh --rollback
+
+.PHONY: migrate-gate
+migrate-gate: gate-migrations ## Alias for the destructive migrations CI gate

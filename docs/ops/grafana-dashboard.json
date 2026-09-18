@@ -1,0 +1,318 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "enable": true,
+        "expr": "changes(agentcms_backup_last_success_timestamp[1h]) > 0",
+        "iconColor": "green",
+        "name": "Backup completed",
+        "step": "60"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "enable": true,
+        "expr": "increase(agentcms_webhook_deliveries_total{outcome=\"failure\"}[15m]) > 0",
+        "iconColor": "orange",
+        "name": "Webhook delivery failures",
+        "step": "900"
+      }
+    ]
+  },
+  "description": "AgentCMS operational overview (#24): request SLOs, error ratio, traffic, outbox + webhook health, backups and disk. Prometheus data source required.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "SLO — requests vs 5xx (5m ratio)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          },
+          "unit": "ratio"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "thresholds",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1)",
+          "legendFormat": "5xx ratio"
+        }
+      ]
+    },
+    {
+      "title": "p95 latency",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.25 },
+              { "color": "red", "value": 0.5 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "title": "Requests / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (path_template) (rate(http_requests_total[5m]))",
+          "legendFormat": "{{path_template}}"
+        }
+      ]
+    },
+    {
+      "title": "Write volume by actor",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "topk(8, sum by (actor_label) (increase(agentcms_writes_total[1h])))",
+          "legendFormat": "{{actor_label}}"
+        }
+      ]
+    },
+    {
+      "title": "HTTP status rate by class",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(http_requests_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "title": "Outbox backlog",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "agentcms_outbox_backlog", "legendFormat": "backlog" },
+        { "expr": "agentcms_outbox_oldest_age_seconds", "legendFormat": "oldest age (s)" }
+      ]
+    },
+    {
+      "title": "Publish attempts vs failures",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 6, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (site_slug) (rate(agentcms_publish_attempts_total[5m]))", "legendFormat": "attempts {{site_slug}}" },
+        { "expr": "sum by (site_slug) (rate(agentcms_publish_failures_total[5m]))", "legendFormat": "failures {{site_slug}}" }
+      ]
+    },
+    {
+      "title": "Auth failures + rate-limit rejections",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (reason) (rate(agentcms_auth_failures_total[5m]))", "legendFormat": "auth {{reason}}" },
+        { "expr": "sum by (reason) (rate(agentcms_rate_limit_rejections_total[5m]))", "legendFormat": "rl {{reason}}" }
+      ]
+    },
+    {
+      "title": "Webhook delivery success ratio (24h)",
+      "type": "gauge",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.9 },
+              { "color": "green", "value": 0.99 }
+            ]
+          },
+          "unit": "ratio"
+        }
+      },
+      "targets": [
+        { "expr": "agentcms_webhook_delivery_success_ratio", "legendFormat": "success ratio" },
+        { "expr": "sum(rate(agentcms_webhook_deliveries_total[1h]))", "legendFormat": "deliveries/hr" }
+      ]
+    },
+    {
+      "title": "DB pool saturation",
+      "type": "timeseries",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.6 },
+              { "color": "red", "value": 0.8 }
+            ]
+          },
+          "unit": "ratio"
+        }
+      },
+      "targets": [
+        { "expr": "agentcms_db_pool_saturation_ratio", "legendFormat": "pool" },
+        { "expr": "agentcms_review_queue_depth", "legendFormat": "review queue" }
+      ]
+    },
+    {
+      "title": "Disk usage (data volume)",
+      "type": "gauge",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "red", "value": 0.9 }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "targets": [
+        { "expr": "agentcms_disk_usage_ratio", "legendFormat": "usage" }
+      ]
+    },
+    {
+      "title": "Backup health",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - agentcms_backup_last_success_timestamp",
+          "legendFormat": "age of last backup (s; >86400 = missed)"
+        },
+        { "expr": "sum(rate(agentcms_backup_results_total[1h]))", "legendFormat": "backups/hr" }
+      ]
+    },
+    {
+      "title": "Rate-limited & auth-failure alert rules (for reference)",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "panels": [
+        {
+          "title": "5xx ratio responsiveness",
+          "type": "timeseries",
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1) > 0.01",
+              "legendFormat": "above 1% = HighErrorRatio5xx"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["agentcms", "observability"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AgentCMS Operations",
+  "uid": "agentcms-ops",
+  "version": 1,
+  "weekStart": ""
+}

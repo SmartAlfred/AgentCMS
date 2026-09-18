@@ -318,7 +318,9 @@ def create_post(
 
     # Create initial revision (revision 1)
     post.revision_count = 1
-    _create_revision(session, post, actor_id=actor_id, source=source)
+    _create_revision(
+        session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+    )
     session.flush()
 
     # Handle tags
@@ -598,7 +600,9 @@ def update_post(
 
     if changed:
         post.revision_count += 1
-        _create_revision(session, post, actor_id=actor_id, source=source)
+        _create_revision(
+            session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+        )
         session.flush()
 
         # --- Content policy check (#17) ---
@@ -763,7 +767,9 @@ def publish_post(
     post.status = "published"
     post.published_at = datetime.now(UTC)
     post.revision_count += 1
-    _create_revision(session, post, actor_id=actor_id, source=source)
+    _create_revision(
+        session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+    )
     session.flush()
 
     # Audit: record the publish
@@ -844,7 +850,9 @@ def unpublish_post(
 
     post.status = "draft"
     post.revision_count += 1
-    _create_revision(session, post, actor_id=actor_id, source=source)
+    _create_revision(
+        session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+    )
     session.flush()
 
     # Audit: record the unpublish
@@ -918,7 +926,9 @@ def trash_post(
     post.status = "trashed"
     post.deleted_at = datetime.now(UTC)
     post.revision_count += 1
-    _create_revision(session, post, actor_id=actor_id, source=source)
+    _create_revision(
+        session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+    )
     session.flush()
 
     # Audit: record the trash
@@ -994,7 +1004,9 @@ def restore_post(
     post.status = "draft"
     post.deleted_at = None
     post.revision_count += 1
-    _create_revision(session, post, actor_id=actor_id, source=source)
+    _create_revision(
+        session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+    )
     session.flush()
 
     # Audit: record the restore
@@ -1182,7 +1194,9 @@ def revert_post(
 
     # Create a new revision (history is never rewritten)
     post.revision_count += 1
-    _create_revision(session, post, actor_id=actor_id, source=source)
+    _create_revision(
+        session, post, actor_id=actor_id, source=source, request_id=(audit_ctx or {}).get("request_id")
+    )
     session.flush()
 
     # Audit: record the revert

@@ -398,6 +398,7 @@ def deliver_event(
     payload: dict[str, Any],
     *,
     delivery_id: uuid.UUID | None = None,
+    request_id: str | None = None,
 ) -> WebhookDelivery:
     """Deliver an event to a webhook subscriber.
 
@@ -410,6 +411,7 @@ def deliver_event(
         webhook_id=webhook.id,
         event=event_type,
         payload=payload,
+        request_id=request_id,
         created_at=datetime.now(UTC),
     )
 
@@ -431,42 +433,61 @@ def deliver_event(
         "X-AgentCMS-Timestamp": timestamp,
     }
 
+    # Observability (#24): trace the HTTP delivery under the originating trace
+    # id + record the delivery outcome. Never emits subscriber URLs/headers.
+    from app.observability import metrics
+    from app.observability.tracing import inject_traceparent, trace
+
+    ok = False
     try:
-        start = time.perf_counter()
-        with httpx.Client(timeout=10.0) as client:
-            response = client.post(
-                webhook.url,
-                content=raw_body,
-                headers=headers,
-            )
-        elapsed_ms = (time.time() - start) * 1000
+        with trace(
+            "webhook.deliver",
+            attributes={
+                "webhook.id": str(webhook.id),
+                "event_type": event_type,
+            },
+        ):
+            # Inject W3C traceparent for the subscriber while the webhook.deliver
+            # span (child of the originating HTTP request trace) is active.
+            carrier: dict[str, str] = {}
+            inject_traceparent(carrier)
+            start = time.perf_counter()
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.post(webhook.url, content=raw_body, headers={**headers, **carrier})
+                elapsed_ms = (time.time() - start) * 1000
 
-        delivery.response_status = response.status_code
-        delivery.response_body = response.text[:1000] if response.text else None
-        delivery.delivered_at = datetime.now(UTC)
+                delivery.response_status = response.status_code
+                delivery.response_body = response.text[:1000] if response.text else None
+                delivery.delivered_at = datetime.now(UTC)
 
-        if response.status_code >= 400:
-            logger.warning(
-                "webhook delivery failed: %s -> %s (%.0fms)",
-                webhook.url,
-                response.status_code,
-                elapsed_ms,
-            )
-            _record_failure(session, webhook)
-        else:
-            logger.info(
-                "webhook delivery ok: %s -> %s (%.0fms)",
-                webhook.url,
-                response.status_code,
-                elapsed_ms,
-            )
-            _record_success(session, webhook)
+                if response.status_code >= 400:
+                    logger.warning(
+                        "webhook delivery failed: %s -> %s (%.0fms)",
+                        webhook.url,
+                        response.status_code,
+                        elapsed_ms,
+                    )
+                    _record_failure(session, webhook)
+                else:
+                    logger.info(
+                        "webhook delivery ok: %s -> %s (%.0fms)",
+                        webhook.url,
+                        response.status_code,
+                        elapsed_ms,
+                    )
+                    _record_success(session, webhook)
+                ok = response.status_code < 400
+
+            except Exception as exc:
+                logger.warning("webhook delivery error: %s -> %s", webhook.url, exc)
+                delivery.response_status = 0
+                delivery.response_body = str(exc)[:500]
+                _record_failure(session, webhook)
+            metrics.observe_webhook_delivery(ok)
 
     except Exception as exc:
-        logger.warning("webhook delivery error: %s -> %s", webhook.url, exc)
-        delivery.response_status = 0
-        delivery.response_body = str(exc)[:500]
-        _record_failure(session, webhook)
+        logger.warning("observability in webhook delivery failed: %s", exc)
 
     session.add(delivery)
     session.flush()
@@ -519,6 +540,7 @@ def redeliver(
         original.event,
         original.payload or {},
         delivery_id=uuid.uuid4(),
+        request_id=original.request_id,
     )
 
     return new_delivery
@@ -590,7 +612,13 @@ def dispatch_pending_events(
                 actor_kind=event.actor_kind,
                 request_id=event.request_id,
             )
-            deliver_event(session, webhook, event.event_type, payload)
+            deliver_event(
+                session,
+                webhook,
+                event.event_type,
+                payload,
+                request_id=event.request_id,
+            )
 
         event.dispatched = True
         event.dispatched_at = datetime.now(UTC)

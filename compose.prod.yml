@@ -1,4 +1,6 @@
-# Production-shaped stack (#2): API image + Postgres, no host-exposed DB port.
+# Production-shaped stack (#2, deploy plumbing #24): API image + Postgres,
+# no host-exposed DB port.  The `migrate` service is the one-shot job the
+# deploy script runs before a rolling update (#24).
 #   docker compose -f compose.prod.yml up
 # Requires SECRET_KEY and POSTGRES_PASSWORD in the environment or .env.
 name: agentcms-prod
@@ -17,12 +19,29 @@ services:
       retries: 30
     volumes:
       - pgdata-prod:/var/lib/postgresql/data
+    # [prod] WAL archiving / PITR: for hosted Postgres use the vendor's
+    # native backup (e.g. RDS snapshots + PITR).  For self-hosted, see
+    # docs/ops/runbook.md §Backups for archive_command + basebackup.
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentcms-migrate:local
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: production
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+    depends_on:
+      db:
+        condition: service_healthy
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: agentcms:local
+    image: ${TAG:-agentcms:local}
     environment:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
@@ -30,11 +49,31 @@ services:
       HOST: 0.0.0.0
       PORT: "8000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      METRICS_TOKEN: ${METRICS_TOKEN}
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-agentcms}
+      TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-0.1}
+      BACKUP_STORE_URL: ${BACKUP_STORE_URL}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE}
+      BACKUP_RETENTION_DAILY: ${BACKUP_RETENTION_DAILY:-30}
+      BACKUP_RETENTION_MONTHLY: ${BACKUP_RETENTION_MONTHLY:-12}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET:-agentcms-media}
+      S3_REGION: ${S3_REGION:-us-east-1}
     ports:
       - "${PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
 
 volumes:
   pgdata-prod:

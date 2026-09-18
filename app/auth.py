@@ -54,6 +54,19 @@ class AuthContext:
     site_id: uuid.UUID | None
 
 
+def _attach_actor_state(request: Request, actor: Actor, *, source: str) -> None:
+    """Expose the authenticated actor to observability (#24).
+
+    The request middleware reads these fields off ``request.state`` to include
+    ``actor_id``/``actor_label``/``actor_kind``/``source`` in the structured
+    log line and the write-actor metrics.
+    """
+    request.state.actor_id = str(actor.id)
+    request.state.actor_label = actor.label
+    request.state.actor_kind = actor.kind
+    request.state.actor_source = source
+
+
 def _extract_bearer(authorization: str | None) -> str | None:
     """Pull the raw token from an ``Authorization: Bearer <token>`` header."""
     if not authorization:
@@ -116,6 +129,8 @@ async def require_auth(
             scopes=list(actor.scopes or []),
             site_id=actor.site_id,
         )
+
+        _attach_actor_state(request, actor, source="api")
 
         # --- Rate limiting (#14) ---
         bucket = _bucket_for_request(request.method, request.url.path)
@@ -276,6 +291,8 @@ def _verify_capability_auth(
         request.method,
         request.url.path,
     )
+
+    _attach_actor_state(request, actor, source="link")
 
     return AuthContext(
         actor=actor,

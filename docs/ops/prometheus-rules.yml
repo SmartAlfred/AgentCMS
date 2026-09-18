@@ -1,0 +1,48 @@
+# Committed alert rules (#24) — generated from app/observability/alerts.py
+# (make alert-rules regenerates this file; a test keeps both in sync).
+# Prometheus config groups: rule_files:
+#   - /etc/prometheus/rules/agentcms.yml
+
+groups:
+  - name: agentcms-alerts
+    rules:
+      - alert: HighErrorRatio5xx
+        expr: (sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1)) > 0.01
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "HTTP 5xx rate above 1% over the last 5 minutes" }
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[10m])) by (le)) > 0.5
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "p95 request latency above 500ms over the last 10 minutes" }
+      - alert: PublishFailures
+        expr: increase(agentcms_publish_failures_total[15m]) >= 3
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "3 or more publish failures in 15 minutes" }
+      - alert: OutboxBacklog
+        expr: (agentcms_outbox_backlog > 1000) OR (agentcms_outbox_oldest_age_seconds > 900)
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "Outbox backlog > 1000 pending or oldest pending > 15 minutes" }
+      - alert: DiskUsageHigh
+        expr: agentcms_disk_usage_ratio > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Data volume usage above 80% for 10 minutes" }
+      - alert: BackupMissed
+        expr: (agentcms_backup_last_success_timestamp == 0) OR (time() - agentcms_backup_last_success_timestamp) > 86400
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "No successful backup in the last 24 hours (nightly backup missed)" }
+      - alert: AuthFailureSpike
+        expr: increase(agentcms_auth_failures_total[5m]) >= 20
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "20+ authentication/authorization failures in 5 minutes" }
+      - alert: RateLimitRejections
+        expr: increase(agentcms_rate_limit_rejections_total[5m]) >= 10
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "10+ rate-limit or quota rejections in 5 minutes" }

@@ -1,8 +1,9 @@
-"""Request context, rate-limit headers, body-size enforcement (#14).
+"""Request context, rate-limit headers, body-size enforcement (#14) + observability (#24).
 
 Middleware stack (outermost first):
 
-1. ``RequestContextMiddleware`` — request id on every request (#2).
+1. ``RequestContextMiddleware`` — request id on every request (#2), byte
+   counting and one structured JSON log line per request (#24).
 2. ``BodySizeLimitMiddleware`` — streaming body-size reject (#14).
 3. ``RateLimitHeadersMiddleware`` — ``X-RateLimit-*`` on every response (#14).
 """
@@ -13,13 +14,16 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from typing import Any
 
+from opentelemetry import trace as _otel_trace
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Awaitable, Callable, Receive, Scope, Send
 
+from app.logging import _REQUEST_FIELDS_ATTR, _TOKEN_RE
+from app.observability_types import RequestObservation
 from app.services.rate_limiter import (
     BODY_SIZE_LIMITS,
     RateLimitResult,
@@ -29,6 +33,8 @@ from app.services.rate_limiter import (
 
 logger = logging.getLogger("app.request")
 
+otel_use_span = _otel_trace.use_span
+
 REQUEST_ID_HEADER = "X-Request-ID"
 
 # Paths that are exempt from rate limiting (health probes, docs, etc.)
@@ -37,46 +43,184 @@ _RATE_LIMIT_EXEMPT_PATHS = frozenset({"/healthz", "/readyz", "/docs", "/redoc", 
 # Only enforce body-size limits on these methods
 _BODY_CHECK_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
+# Matches capability tokens; used to redact untemplated paths in log output.
+_CAP_PATH_RE = re.compile(r"/c/[A-Za-z0-9_-]{1,128}/[A-Za-z0-9_-]{20,}")
+
 
 # ---------------------------------------------------------------------------
-# 1. Request context (unchanged from #2)
+# 1. Request context + observability (#2, #24)
 # ---------------------------------------------------------------------------
 
 
-class RequestContextMiddleware(BaseHTTPMiddleware):
-    """Attach ``request.state.request_id`` and echo it back in ``X-Request-ID``."""
+def _safe_path_template(scope: Scope) -> str:
+    """Return the route's template path (never the raw path).
+
+    Token-bearing routes are FastAPI ``APIRoute``\\s and always end up with
+    ``scope["route"]`` set; for unmatched / rejected-before-routing requests
+    we fall back to the literal path only when it cannot contain a token.
+    """
+    route = scope.get("route")
+    template = getattr(route, "path", None) if route is not None else None
+    if template:
+        return str(template)
+    raw_path = scope.get("path", "")
+    if _TOKEN_RE.search(raw_path) or _CAP_PATH_RE.search(raw_path):
+        return "<unmatched>"
+    return raw_path or "<unmatched>"
+
+
+def _client_ip(scope: Scope) -> str:
+    forwarded = None
+    for name, value in scope.get("headers", []):
+        if name == b"x-forwarded-for":
+            forwarded = value.decode("latin-1")
+            break
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    client = scope.get("client")
+    return client[0] if client else ""
+
+
+def _user_agent(scope: Scope) -> str:
+    for name, value in scope.get("headers", []):
+        if name == b"user-agent":
+            return value.decode("latin-1")[:512]
+    return ""
+
+
+def _actor_field(scope: Scope, key: str) -> str:
+    return str(scope.get("state", {}).get(key, "")) if isinstance(scope.get("state"), dict) else ""
+
+
+class RequestContextMiddleware:
+    """Raw-ASGI middleware attaching request id and emitting one structured log.
+
+    A pure ASGI middleware (rather than ``BaseHTTPMiddleware``) so bytes in/out
+    are counted on the real ``receive``/``send`` stream and the structured
+    log line is emitted *after* the response body has been sent.
+
+    ``path_template`` comes from ``request.scope["route"]`` (set by FastAPI's
+    ``APIRoute.matches``) so capability tokens never reach the logs (#6, #24).
+    """
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        incoming = request.headers.get(REQUEST_ID_HEADER, "")
-        request_id = incoming.strip() or uuid.uuid4().hex
-        request.state.request_id = request_id
-        started = time.perf_counter()
-        try:
-            response = await call_next(request)
-        except Exception:  # pragma: no cover - defensive, handlers normally catch
-            logger.exception(
-                "unhandled error %s %s",
-                request.method,
-                request.url.path,
-                extra={"request_id": request_id},
-            )
-            raise
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        response.headers[REQUEST_ID_HEADER] = request_id
-        logger.info(
-            "%s %s -> %s in %.1fms",
-            request.method,
-            request.url.path,
-            response.status_code,
-            elapsed_ms,
-            extra={"request_id": request_id},
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        incoming = ""
+        for name, value in scope.get("headers", []):
+            if name == b"x-request-id":
+                incoming = value.decode("latin-1").strip()
+                break
+        request_id = incoming or uuid.uuid4().hex
+
+        scope.setdefault("state", {})["request_id"] = request_id
+        scope["state"]["log_fields"] = None  # placeholder, filled at completion
+
+        obs = RequestObservation(request_id=request_id, method=scope.get("method", ""))
+
+        # --- Tracing (#24): extract W3C traceparent + open the root span ------
+        from app.observability import tracing
+
+        remote_ctx = tracing.extract_traceparent(
+            {k.decode("latin-1"): v.decode("latin-1") for k, v in scope.get("headers", [])}
         )
-        return response
+        span = tracing.start_http_span(obs.method, remote_ctx)
+
+        bytes_in = 0
+
+        async def counting_receive() -> Any:
+            nonlocal bytes_in
+            message = await receive()
+            if message.get("type") == "http.request":
+                body = message.get("body", b"")
+                bytes_in += len(body)
+            return message
+
+        bytes_out = 0
+        send_before_app_ok = False
+        status_start = [0]
+
+        async def counting_send(message: Any) -> None:
+            nonlocal bytes_out, send_before_app_ok
+            if message.get("type") == "http.response.start":
+                send_before_app_ok = True
+                raw_headers = message.get("headers", ())
+                if isinstance(raw_headers, (list, tuple)):
+                    headers = [
+                        tuple(h) if isinstance(h, (list, tuple)) else (h[0], h[1]) for h in raw_headers
+                    ]
+                else:  # pragma: no cover - defensive
+                    headers = list(raw_headers)
+                headers = [
+                    (k, v)
+                    for (k, v) in headers
+                    if not (isinstance(k, bytes) and k.lower() == b"x-request-id")
+                ]
+                resp_id = request_id.encode("latin-1")
+                headers.append((REQUEST_ID_HEADER.encode("latin-1"), resp_id))
+                # http.response.start must be awaited with the merged headers.
+                status_start[0] = int(message.get("status", 0) or 0)
+                await send({**{k: v for k, v in message.items() if k != "headers"}, "headers": headers})
+                return
+            if message.get("type") == "http.response.body" and send_before_app_ok:
+                chunk = message.get("body", b"")
+                bytes_out += len(chunk) if isinstance(chunk, (bytes, bytearray)) else 0
+            await send(message)
+
+        started = time.perf_counter()
+        status: int = 0
+        try:
+            with otel_use_span(span, end_on_exit=False):
+                await self.app(scope, counting_receive, counting_send)
+            status = status_start[0]
+        except BaseException:
+            status = status_start[0] or 500
+            obs.bytes_err = "exception"
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            obs.path_template = _safe_path_template(scope)
+            obs.status = status
+            obs.duration_ms = elapsed_ms
+            obs.ip = _client_ip(scope)
+            obs.user_agent = _user_agent(scope)
+            obs.bytes_in = bytes_in
+            obs.bytes_out = bytes_out
+            obs.actor_id = _actor_field(scope, "actor_id")
+            obs.actor_label = _actor_field(scope, "actor_label")
+            obs.actor_kind = _actor_field(scope, "actor_kind")
+            obs.source = _actor_field(scope, "actor_source") or _actor_field(scope, "source")
+
+            scope["state"]["log_fields"] = obs.as_log_record()
+
+            # Record observables / span end (idempotent, never raises).
+            try:
+                from app.observability import observe_request
+
+                observe_request(obs)
+                tracing.end_http_span(
+                    span,
+                    status_code=status,
+                    duration_ms=elapsed_ms,
+                    path_template=obs.path_template,
+                    error=obs.is_error,
+                    request_id=request_id,
+                )
+            except Exception:  # pragma: no cover - observability must never break the request
+                logger.exception("observability hook failed", extra={"request_id": request_id})
+
+            logger.info(
+                "request complete",
+                extra={
+                    "request_id": request_id,
+                    _REQUEST_FIELDS_ATTR: obs.as_log_record(),
+                },
+            )
 
 
 # ---------------------------------------------------------------------------
