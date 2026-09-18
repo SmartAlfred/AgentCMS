@@ -613,3 +613,23 @@ class TestFuzzing:
             data = resp.json()
             assert "valid" in data
             assert "errors" in data
+
+
+class TestSimhashDeterminism:
+    """simhash must not depend on PYTHONHASHSEED (builtin hash() is salted)."""
+
+    def test_simhash_golden_value(self) -> None:
+        from app.services.validation import _simhash
+
+        # Golden value: if simhash is ever computed with the salted builtin
+        # hash() again, this fails in some processes -- which is exactly the
+        # non-determinism that made duplicate detection flaky (#19 CI).
+        assert _simhash("hello world deterministic fingerprint") == 41800305440202823
+
+    def test_similarity_of_unrelated_short_posts_below_threshold(self) -> None:
+        from app.services.validation import SIMHASH_THRESHOLD, _sequence_similarity, _simhash, _similarity
+
+        a = "# Cooking Pasta\n\nBoil water in a large pot. Add salt. Cook spaghetti."
+        b = "# Quantum Computing\n\nQubits can exist in multiple states at once."
+        assert _similarity(_simhash(a), _simhash(b)) < SIMHASH_THRESHOLD
+        assert _sequence_similarity(a, b) < 0.45

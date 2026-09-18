@@ -23,6 +23,7 @@ Design:
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from typing import Any
@@ -51,7 +52,10 @@ MAX_DESCRIPTION_LENGTH = 160
 MAX_BODY_SIZE_BYTES = 262_144  # 256 KB
 MAX_TAGS = 20
 LONG_POST_THRESHOLD = 5000  # words
-SIMHASH_THRESHOLD = 0.65  # near-duplicate detection (char-level rewrites)
+# near-duplicate detection (char-level rewrites).  Calibrated against the
+# *stable* simhash: 64-bit simhash on short texts is noisy, and the old 0.65
+# sat inside that noise band (unrelated short posts measured 0.67).
+SIMHASH_THRESHOLD = 0.80
 TOKEN_SIMILARITY_THRESHOLD = 0.45  # paraphrased reposts (token-level rewrites)
 LINK_TIMEOUT_SECONDS = 3.0  # total timeout for all link checks
 PER_LINK_TIMEOUT_SECONDS = 2.0  # timeout per individual link
@@ -156,6 +160,16 @@ def _derive_title(body_md: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _stable_token_hash(token: str) -> int:
+    """Deterministic 64-bit hash of a token.
+
+    ``hash()`` is salted per interpreter process (PYTHONHASHSEED), which made
+    simhash -- and therefore duplicate detection -- non-deterministic across
+    processes, restarts and CI runs.  blake2b is stable everywhere.
+    """
+    return int.from_bytes(hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest(), "big")
+
+
 def _simhash(text: str) -> int:
     """Compute a 64-bit SimHash fingerprint for near-duplicate detection."""
     tokens = re.findall(r"\w+", text.lower())
@@ -164,7 +178,7 @@ def _simhash(text: str) -> int:
 
     v = [0] * 64
     for token in tokens:
-        h = hash(token)
+        h = _stable_token_hash(token)
         for i in range(64):
             if h & (1 << i):
                 v[i] += 1
