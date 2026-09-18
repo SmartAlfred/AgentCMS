@@ -51,7 +51,14 @@ TAGS_METADATA = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    yield
+    # The MCP transport at /mcp is a mounted sub-application, and Starlette does
+    # not run a mounted app's lifespan — so the parent owns the session manager.
+    transport = getattr(app.state, "mcp_transport", None)
+    if transport is None:
+        yield
+    else:
+        async with transport.lifespan():
+            yield
     dispose_engine()
 
 
@@ -105,6 +112,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(docs_router)
     app.include_router(llms_router)
     register_v1_routes(app)
+    # Mounted before the public router: its catch-alls (/{site_slug}) would
+    # otherwise swallow /mcp, and Starlette matches routes in registration order.
+    register_mcp_routes(app)
     register_public_routes(app)
     register_dashboard_routes(app)
 
@@ -173,6 +183,21 @@ def register_dashboard_routes(app: FastAPI) -> None:
     from app.dashboard import router as dashboard_router
 
     app.include_router(dashboard_router)
+
+
+def register_mcp_routes(app: FastAPI) -> None:
+    """Mount the MCP Streamable-HTTP endpoint at /mcp (ticket #22)."""
+    from app.mcp.server import create_mcp_server
+    from app.mcp.transport import create_streamable_http_transport
+
+    transport = create_streamable_http_transport(create_mcp_server())
+    # Starlette dispatches a *class instance* endpoint as a raw ASGI app (only
+    # functions are wrapped as request handlers) - which is what the transport
+    # needs. FastAPI's add_route signature is typed for request handlers, hence
+    # the ignore. app.mount() cannot be used: it 307-redirects "/mcp" -> "/mcp/",
+    # and MCP clients POST to the advertised URL exactly.
+    app.add_route("/mcp", transport.app, methods=["GET", "POST", "DELETE"])  # type: ignore[arg-type]
+    app.state.mcp_transport = transport
 
 
 app = create_app()

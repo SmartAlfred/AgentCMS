@@ -465,3 +465,109 @@ python -m scripts.cli export --deploy=github-pages --repo=owner/repo --out=dist 
 `--dry-run` prints the deploy plan; the real push is done by the `docs/ci/github-pages.yml`
 workflow or by running the plan locally (review it first — it force-pushes to
 the `gh-pages` branch).
+
+## MCP (Model Context Protocol) — AgentCMS as Tools
+
+AgentCMS exposes an MCP server so AI agents (Claude, Cursor, ChatGPT Desktop) can call it as typed tools.
+
+### Transports
+
+| Transport | Use Case | Setup |
+|-----------|----------|-------|
+| **stdio** | Local desktop apps (Claude Desktop, Cursor) | `pipx install agentcms-mcp` |
+| **Streamable-HTTP** | Remote/shared instances | `POST /mcp` on your AgentCMS URL |
+
+### Quick Start (stdio)
+
+```bash
+# 1. Install
+pipx install agentcms-mcp
+
+# 2. Create capability link with needed verbs
+curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
+  -H "Authorization: Bearer ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"site_slug": "blog", "verbs": ["posts:read", "posts:write", "posts:publish"]}'
+
+# 3. Configure client (Claude Desktop example)
+# ~/.config/claude/claude_desktop_config.json:
+{
+  "mcpServers": {
+    "agentcms": {
+      "command": "agentcms-mcp",
+      "env": {
+        "AGENTCMS_BASE_URL": "https://your-agentcms.example.com",
+        "AGENTCMS_TOKEN": "cap_blog_abc123..."
+      }
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description | Required Verb |
+|------|-------------|---------------|
+| `check_status` | Permissions, limits, site info | (public) |
+| `create_post` | Create draft (title/slug auto) | `posts:write` |
+| `update_post` | Partial update | `posts:write` |
+| `get_post` | Read by ID/slug (JSON/MD) | `posts:read` |
+| `list_posts` | Paginated, filtered | `posts:read` |
+| `search_posts` | Full-text search | `posts:read` |
+| `publish_post` | Publish draft (idempotent) | `posts:publish` |
+| `unpublish_post` | Revert to draft | `posts:publish` |
+| `validate_post` | **Self-correction loop** — dry-run validation | `posts:write` |
+| `list_revisions` | Revision metadata | `posts:read` |
+| `revert_post` | Revert to revision (creates new rev) | `posts:write` |
+| `upload_asset` | Presigned upload URL | `assets:write` |
+| `list_assets` | List assets with markdown | `posts:read` |
+
+### Tool Examples (MCP JSON-RPC)
+
+```json
+// check_status — ALWAYS CALL FIRST
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_status","arguments":{}}}
+
+// create_post
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_post","arguments":{"site":"blog","body_md":"# Hello\n\nWorld.","tags":["demo"]}}}
+
+// publish_post (idempotent)
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"publish_post","arguments":{"id_or_slug":"<post-id>"}}}
+
+// validate_post (dry-run)
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"validate_post","arguments":{"site":"blog","body_md":"# Draft","dry_run":true}}}
+```
+
+### Resources
+
+MCP resources for reading docs without tool calls:
+
+- `agentcms://llms.txt` — Full instruction sheet
+- `agentcms://site/{site}/posts` — Post list for a site
+
+### Error Format
+
+All MCP tool errors return structured `application/problem+json` — read the `hint` field:
+
+```json
+{
+  "isError": true,
+  "content": [{"type": "text", "text": "{\"type\":\"https://agentcms.dev/problems/forbidden\",\"title\":\"Forbidden\",\"status\":403,\"detail\":\"This link lacks the `posts:publish` permission.\",\"code\":\"forbidden\",\"hint\":\"Ask the site owner for a link that grants `posts:publish`.\",\"request_id\":\"req-abc\"}"}]}
+```
+
+### Rate Limits
+
+| Bucket | Limit | Window |
+|--------|-------|--------|
+| writes | 30 | 1 min |
+| reads | 600 | 1 min |
+| publishes | 50 | 1 day |
+| writes | 500 | 1 day |
+
+Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `Retry-After`.
+
+### Client Setup Guides
+
+- [Claude Desktop / Cursor / Generic MCP](integrations/mcp-setup.md)
+- [Cursor-specific](integrations/cursor-mcp.md)
+- [ChatGPT Custom GPT (Actions fallback)](integrations/chatgpt-actions.md)
