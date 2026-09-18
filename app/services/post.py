@@ -26,6 +26,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.domain.errors import (
+    ContentPolicyBlockedError,
     ContentRequiredError,
     InvalidCursorError,
     InvalidTransitionError,
@@ -246,6 +247,7 @@ def create_post(
     actor_id: uuid.UUID,
     source: str = "api",
     audit_ctx: dict[str, Any] | None = None,
+    is_agent_actor: bool = True,
 ) -> tuple[Post, list[str]]:
     """Create a new post in draft status.
 
@@ -322,6 +324,38 @@ def create_post(
     # Handle tags
     if tags:
         _sync_tags(session, post, tags)
+
+    # --- Content policy check (#17) ---
+    from app.services.content_policy import (
+        evaluate_content_policy,
+        record_moderation_decision,
+    )
+
+    # Policy detection runs on the body as submitted (before invisible-character
+    # stripping) so hidden-text payloads are still caught; storage keeps the
+    # normalised body.
+    policy_eval = evaluate_content_policy(
+        session,
+        site_id=site.id,
+        body_md=body_md,
+        is_agent_actor=is_agent_actor,
+        exclude_post_id=post.id,
+    )
+
+    if not policy_eval.allowed and policy_eval.blocking_check:
+        session.rollback()
+        check = policy_eval.blocking_check
+        raise ContentPolicyBlockedError(check.rule_name, check.evidence)
+
+    # Record flag decisions (content stored but not publishable)
+    flagged = False
+    for check in policy_eval.checks:
+        if check.outcome == "flag":
+            record_moderation_decision(session, post_id=post.id, check=check)
+            flagged = True
+
+    if flagged:
+        post.status = "pending_review"
 
     # Audit: record the creation
     from app.services.audit import compute_content_hash as audit_hash
@@ -445,6 +479,7 @@ def update_post(
     actor_id: uuid.UUID,
     source: str = "api",
     audit_ctx: dict[str, Any] | None = None,
+    is_agent_actor: bool = True,
 ) -> tuple[Post, list[str]]:
     """Partially update a post.  Creates a revision snapshot.
     Returns ``(post, warnings)`` where warnings include markdown normalisation notes.
@@ -519,6 +554,38 @@ def update_post(
         _create_revision(session, post, actor_id=actor_id, source=source)
         session.flush()
 
+        # --- Content policy check (#17) ---
+        from app.services.content_policy import (
+            evaluate_content_policy,
+            record_moderation_decision,
+        )
+
+        if body_md is not None:
+            # Detect on the body as submitted; the stored body is normalised.
+            policy_eval = evaluate_content_policy(
+                session,
+                site_id=post.site_id,
+                body_md=body_md,
+                is_agent_actor=is_agent_actor,
+                existing_post_id=post.id,
+                exclude_post_id=post.id,
+            )
+
+            if not policy_eval.allowed and policy_eval.blocking_check:
+                session.rollback()
+                check = policy_eval.blocking_check
+                raise ContentPolicyBlockedError(check.rule_name, check.evidence)
+
+            # Record flag decisions
+            flagged = False
+            for check in policy_eval.checks:
+                if check.outcome == "flag":
+                    record_moderation_decision(session, post_id=post.id, check=check)
+                    flagged = True
+
+            if flagged:
+                post.status = "pending_review"
+
         # Audit: record the update
         from app.services.audit import compute_content_hash as audit_hash
         from app.services.audit import record_event
@@ -558,12 +625,16 @@ def publish_post(
     actor_id: uuid.UUID,
     source: str = "api",
     audit_ctx: dict[str, Any] | None = None,
+    is_agent_actor: bool = True,
 ) -> tuple[Post, list[str]]:
     """Publish a draft post.
 
     If the site requires review (``publish_mode == "require_review"`` and
     trust mode is not active), the post enters ``pending_review`` instead
     of being immediately published.
+
+    If the post has been flagged by content policy, agent actors cannot
+    publish it even with ``posts:publish`` scope.
 
     Idempotent — publishing twice returns the same post with warnings.
     """
@@ -584,6 +655,15 @@ def publish_post(
             post.status,
             allowed_from=["draft"],
         )
+
+    # --- Content policy: blocked publish for flagged content (#17) ---
+    if is_agent_actor:
+        from app.services.content_policy import is_post_publishable
+
+        if not is_post_publishable(session, post.id):
+            from app.domain.errors import ContentPolicyPublishBlockedError
+
+            raise ContentPolicyPublishBlockedError()
 
     # Check if site requires review
     from app.models.site import Site as SiteModel

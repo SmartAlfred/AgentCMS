@@ -13,6 +13,7 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
+from app.api.v1.admin_moderation import router as admin_moderation_router  # noqa: E402
 from app.api.v1.admin_reviews import router as admin_reviews_router  # noqa: E402
 from app.api.v1.admin_tokens import router as admin_tokens_router  # noqa: E402
 from app.api.v1.audit import router as audit_router  # noqa: E402
@@ -22,6 +23,7 @@ router.include_router(posts_router)
 router.include_router(admin_tokens_router)
 router.include_router(audit_router)
 router.include_router(admin_reviews_router)
+router.include_router(admin_moderation_router)
 
 
 @router.get(

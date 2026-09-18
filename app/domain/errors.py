@@ -325,3 +325,96 @@ class DatabaseUnavailableError(DomainError):
             ),
             headers={"Retry-After": "2"},
         )
+
+
+# --- 422 Content Policy -----------------------------------------------------
+
+
+class ContentPolicyBlockedError(UnprocessableContentError):
+    """422 — content was blocked by a content policy rule."""
+
+    code = "content-policy-blocked"
+    title = "Content policy violation"
+
+    def __init__(self, rule_name: str, evidence: str | None = None) -> None:
+        detail = f"Content blocked by policy rule: {rule_name}."
+        if evidence:
+            detail += f" Evidence: {evidence}"
+        super().__init__(
+            detail,
+            hint=(
+                "Your content was rejected by a content policy rule. "
+                "Review the rule name above and modify your content to comply. "
+                "Content policies check for blocked terms, link density, "
+                "and injection patterns. Retry with modified content."
+            ),
+            extra={
+                "rule_name": rule_name,
+                "evidence": evidence,
+                "content_policy_code": "CONTENT_POLICY_BLOCKED",
+            },
+        )
+
+
+class ContentPolicyFlaggedError(UnprocessableContentError):
+    """422 — content was flagged by a content policy rule (stored but not publishable)."""
+
+    code = "content-policy-flagged"
+    title = "Content flagged for review"
+
+    def __init__(self, rule_name: str, evidence: str | None = None) -> None:
+        detail = f"Content flagged by policy rule: {rule_name}."
+        if evidence:
+            detail += f" Evidence: {evidence}"
+        super().__init__(
+            detail,
+            hint=(
+                "Your content has been stored but flagged for human review. "
+                "It cannot be published until an administrator clears it. "
+                "Contact the site administrator if you believe this is a mistake."
+            ),
+            extra={
+                "rule_name": rule_name,
+                "evidence": evidence,
+                "code": "CONTENT_POLICY_FLAGGED",
+            },
+        )
+
+
+class ContentPolicyPublishBlockedError(DomainError):
+    """403 — cannot publish flagged content even with posts:publish scope."""
+
+    status_code = 403
+    code = "content-policy-publish-blocked"
+    title = "Cannot publish flagged content"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This post has been flagged by content policy and cannot be published.",
+            hint=(
+                "Flagged content requires human review before it can be published. "
+                "Even with posts:publish permission, flagged posts are held until "
+                "an administrator clears them in the dashboard."
+            ),
+        )
+
+
+class DuplicateContentError(UnprocessableContentError):
+    """422 — content is a near-duplicate of an existing post."""
+
+    code = "duplicate-content"
+    title = "Duplicate content detected"
+
+    def __init__(self, matched_post_id: str) -> None:
+        super().__init__(
+            f"This content is a near-duplicate of an existing post (matched: {matched_post_id}).",
+            hint=(
+                "The content you are trying to create or publish is very similar to an existing post. "
+                "If this is a retry, the duplicate was already created. "
+                "If this is original content, rephrase it to be sufficiently different."
+            ),
+            extra={
+                "matched_post_id": matched_post_id,
+                "code": "DUPLICATE_LIKELY",
+            },
+        )

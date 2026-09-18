@@ -285,6 +285,7 @@ def create_post_endpoint(
         excerpt=create_body.excerpt,
         frontmatter=create_body.frontmatter,
         actor_id=auth.actor_id,
+        is_agent_actor="acms_" not in (request.headers.get("authorization", "")),
         audit_ctx={
             "actor_label": auth.label,
             "actor_kind": "machine",
@@ -508,6 +509,7 @@ def update_post_endpoint(
         excerpt=body.excerpt,
         frontmatter=body.frontmatter,
         actor_id=auth.actor_id,
+        is_agent_actor="acms_" not in (request.headers.get("authorization", "")),
         audit_ctx={
             "actor_label": auth.label,
             "actor_kind": "machine",
@@ -601,6 +603,7 @@ def publish_post_endpoint(
         db,
         identifier,
         actor_id=auth.actor_id,
+        is_agent_actor="acms_" not in (request.headers.get("authorization", "")),
         audit_ctx={
             "actor_label": auth.label,
             "actor_kind": "machine",

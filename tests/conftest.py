@@ -26,6 +26,8 @@ TRUNCATE_CANDIDATES = (
     "tags",
     "post_revisions",
     "reviews",
+    "moderation_decisions",
+    "content_policies",
     "posts",
     "sites",
     "actors",

@@ -107,6 +107,15 @@ def strip_trailing_whitespace(text: str) -> str:
     return "\n".join(line.rstrip() for line in text.split("\n"))
 
 
+# Zero-width / invisible characters used to smuggle hidden payloads past review.
+_INVISIBLE_CHARS_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
+
+
+def strip_invisible_characters(text: str) -> str:
+    """Remove zero-width characters that can hide text from human review."""
+    return _INVISIBLE_CHARS_RE.sub("", text)
+
+
 def ensure_single_trailing_newline(text: str) -> str:
     """Ensure exactly one trailing newline, strip leading blank lines."""
     text = text.strip("\n")
@@ -166,6 +175,11 @@ def normalise_body(body_md: str) -> tuple[str, list[str]]:
     body_md = normalise_line_endings(body_md)
     if body_md != original:
         warnings.append("Normalised line endings to \\n.")
+
+    body_no_invisibles = strip_invisible_characters(body_md)
+    if body_no_invisibles != body_md:
+        warnings.append("Stripped invisible zero-width characters.")
+        body_md = body_no_invisibles
 
     body_stripped = strip_trailing_whitespace(body_md)
     if body_stripped != body_md:

@@ -277,6 +277,7 @@ def create_post_via_link(
         excerpt=body.excerpt,
         actor_id=actor.id,
         source="link",
+        is_agent_actor=True,
         audit_ctx={
             "actor_label": _link.label if _link else actor.label,
             "actor_kind": "capability_link",
@@ -342,6 +343,7 @@ def publish_post_via_link(
         post_id,
         actor_id=actor.id,
         source="link",
+        is_agent_actor=True,
         audit_ctx={
             "actor_label": _link.label if _link else actor.label,
             "actor_kind": "capability_link",
