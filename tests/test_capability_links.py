@@ -129,6 +129,39 @@ class TestCapabilityInstructionSheet:
         assert "posts:write" in body
         assert "posts:publish" in body
         assert "POST" in body
+        # Verify the exact publish URL pattern appears in the sheet
+        assert f"/c/{plaintext}/posts/{{post_id}}/publish" in body
+        # Verify all documented URLs are routable (not 404)
+        self._assert_sheet_urls_routable(client, plaintext, body)
+
+    def _assert_sheet_urls_routable(self, client: TestClient, token: str, body: str) -> None:
+        """Parse every POST/GET URL line from the sheet and verify it's not a 404."""
+        import re
+
+        # Find all lines like "POST http://testserver/c/..." or "GET http://testserver/c/..."
+        url_lines = re.findall(r"^(POST|GET)\s+(\S+)$", body, re.MULTILINE)
+        assert url_lines, "No HTTP method + URL lines found in instruction sheet"
+
+        for method, url in url_lines:
+            # Replace {post_id} placeholder with a dummy value for routing test
+            # The route should exist even if the specific post doesn't (we expect 404 for wrong ID
+            # but NOT 404 for "endpoint not found" - we want 404 "not found" or 403/401 etc.)
+            test_url = url.replace("{post_id}", "00000000-0000-0000-0000-000000000000")
+
+            # Make request and check it's not a "endpoint not found" 404
+            if method == "POST":
+                resp = client.post(test_url, json={"body_md": "# Test"} if "/posts$" in test_url else {})
+            else:
+                resp = client.get(test_url)
+
+            # The endpoint should exist (not 404 with code "endpoint-not-found")
+            # It may return 401, 403, 404 (resource not found), 422, etc. but NOT endpoint-not-found
+            if resp.status_code == 404:
+                problem = resp.json()
+                assert problem.get("code") != "endpoint-not-found", (
+                    f"{method} {test_url} returned endpoint-not-found — the instruction sheet "
+                    f"advertises a non-existent route. Full response: {problem}"
+                )
 
     def test_instruction_sheet_html(self, client: TestClient, db: Session) -> None:
         _create_site(db)

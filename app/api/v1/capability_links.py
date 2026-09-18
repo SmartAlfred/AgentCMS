@@ -121,7 +121,7 @@ def _build_instruction_sheet(
 
     # POST /c/{token}/posts/{id}/publish
     if "posts:publish" in verbs:
-        lines.append(f"POST {base}/c/{{post_id}}/publish")
+        lines.append(f"POST {base}/c/{token}/posts/{{post_id}}/publish")
         lines.append("Returns the published post.")
         lines.append("")
 

@@ -236,7 +236,10 @@ _HTTP_HINTS: dict[int, str] = {
         "the capability link you were given (see #6)."
     ),
     403: "The token or link you used does not carry the scope this call needs.",
-    404: "Check the path against GET /openapi.json — paths are versioned under /v1.",
+    404: (
+        "Check the path against GET /openapi.json — API paths are versioned "
+        "under /v1; capability link paths are under /c/."
+    ),
     405: "Check the HTTP method for this path in GET /openapi.json.",
     429: "Respect `Retry-After` and slow down; see #14 for quota details.",
 }
