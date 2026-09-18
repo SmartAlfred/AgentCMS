@@ -43,6 +43,7 @@ TAGS_METADATA = [
     {"name": "search", "description": "Full-text search with faceted filters."},
     {"name": "tags", "description": "Tag listing with counts and merge."},
     {"name": "sites", "description": "Content containers (site slug, publish mode)."},
+    {"name": "assets", "description": "Media uploads: presigned URLs, inline upload, variants."},
 ]
 
 
@@ -140,10 +141,12 @@ def register_v1_routes(app: FastAPI) -> None:
     """Mount the versioned content API (implemented in #4, #5, #6)."""
 
     from app.api.admin_rate_limits import router as admin_rl_router
+    from app.api.media import router as media_router
     from app.api.v1.capability_links import router as cap_router
     from app.api.v1.routes import router as v1_router
 
     app.include_router(v1_router, prefix="/v1")
+    app.include_router(media_router)
     app.include_router(admin_rl_router)
     app.include_router(cap_router)
 

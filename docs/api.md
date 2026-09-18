@@ -15,6 +15,12 @@ DELETE /v1/posts/{id}                         trash (recoverable)
 GET    /v1/search                             full-text search with filters
 GET    /v1/sites/{site}/tags                  list tags with counts
 POST   /v1/sites/{site}/tags/{tag}/merge      merge tags (admin)
+POST   /v1/sites/{site}/assets                create asset (presigned URL)
+POST   /v1/sites/{site}/assets/inline         inline upload (base64, max 2MB)
+POST   /v1/assets/{id}/finalize               validate, sniff, generate variants
+GET    /v1/sites/{site}/assets                list assets
+GET    /v1/assets/{id}                        get asset details
+DELETE /v1/assets/{id}                        soft-delete asset
 ```
 
 ## Create a post
@@ -259,3 +265,96 @@ Response:
 ```
 
 Tag merge rewrites `post_tags` for all affected posts. Tag changes do NOT create content revisions but emit audit events per affected post.
+
+## Media uploads
+
+### Create an asset (presigned URL)
+
+```bash
+curl -X POST http://localhost:8000/v1/sites/blog/assets \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "hero.png", "content_type": "image/png", "bytes": 102400, "alt": "Hero image", "kind": "image"}'
+```
+
+Response (`201`):
+
+```json
+{
+  "id": "...",
+  "upload_url": "http://localhost:9000/agentcms-media/media/.../hero.png?...",
+  "upload_method": "PUT",
+  "upload_headers": {"Content-Type": "image/png"},
+  "expires_in": 900,
+  "asset_url": "/media/{sha256}/hero.png",
+  "markdown": "![Hero image](/media/{sha256}/hero.png)",
+  "variants": {},
+  "max_bytes": 52428800
+}
+```
+
+### Upload bytes
+
+```bash
+curl -X PUT <upload_url> -H "Content-Type: image/png" --data-binary @hero.png
+```
+
+### Finalize
+
+```bash
+curl -X POST http://localhost:8000/v1/assets/{id}/finalize
+```
+
+Response:
+
+```json
+{
+  "id": "...",
+  "status": "ready",
+  "filename": "hero.png",
+  "content_type": "image/png",
+  "sha256": "...",
+  "width": 800,
+  "height": 600,
+  "asset_url": "/media/{sha256}/hero.png",
+  "markdown": "![Hero image](/media/{sha256}/hero.png)",
+  "variants": {
+    "thumb": {"url": "/media/{hash}/hero.thumb.webp", "width": 256, "height": 256},
+    "inline": {"url": "/media/{hash}/hero.inline.webp", "width": 1200, "height": 900},
+    "og": {"url": "/media/{hash}/hero.og.webp", "width": 1200, "height": 630}
+  }
+}
+```
+
+### Inline upload (escape hatch, max 2 MB)
+
+```bash
+curl -X POST http://localhost:8000/v1/sites/blog/assets/inline \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "small.png", "data_base64": "<base64>", "kind": "image"}'
+```
+
+### List assets
+
+```bash
+curl http://localhost:8000/v1/sites/blog/assets
+curl "http://localhost:8000/v1/sites/blog/assets?kind=image&q=hero"
+```
+
+### Content policy
+
+SVG, HTML, executables are rejected with a clear error listing allowed types.
+Magic bytes are verified -- a `.png` with HTML content is rejected.
+
+### Image variants
+
+Generated on finalize:
+- `thumb`: 256x256 center crop
+- `inline`: 1200 wide, proportional height
+- `og`: 1200x630 center crop
+
+EXIF (including GPS) is stripped automatically.
+
+### Serving
+
+Immutable, content-hashed URLs: `/media/{sha256}/{filename}`.
+Cache-Control: `public, max-age=31536000, immutable`.

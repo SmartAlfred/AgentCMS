@@ -93,6 +93,7 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     """
 
     _MAX_BODY_BYTES = BODY_SIZE_LIMITS["post_body_bytes"]  # 256 KB
+    _INLINE_MAX_BYTES = 2 * 1024 * 1024  # 2 MB for inline uploads
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -105,21 +106,40 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
                 except ValueError:
                     pass
                 else:
-                    if size > self._MAX_BODY_BYTES:
+                    # Allow larger payloads for the inline upload endpoint
+                    limit = (
+                        self._INLINE_MAX_BYTES
+                        if "/assets/inline" in request.url.path
+                        else self._MAX_BODY_BYTES
+                    )
+                    if size > limit:
                         from app.errors import problem_response
+
+                        if "/assets/inline" in request.url.path:
+                            detail = (
+                                f"Inline upload is {size:,} bytes; the maximum is "
+                                f"{self._INLINE_MAX_BYTES:,} bytes (2 MB)."
+                            )
+                            hint = (
+                                "Use the presigned upload path for larger files: "
+                                "POST /v1/sites/{site}/assets, then PUT to the upload_url."
+                            )
+                        else:
+                            detail = (
+                                f"Request body is {size:,} bytes; the maximum is "
+                                f"{self._MAX_BODY_BYTES:,} bytes (256 KB)."
+                            )
+                            hint = (
+                                "Reduce the body size and retry. Large posts should be chunked or compressed."
+                            )
 
                         return problem_response(
                             request,
                             status_code=413,
                             code="payload-too-large",
                             title="Payload too large",
-                            detail=(
-                                f"Request body is {size:,} bytes; the maximum is "
-                                f"{self._MAX_BODY_BYTES:,} bytes (256 KB)."
-                            ),
-                            hint=(
-                                "Reduce the body size and retry. Large posts should be chunked or compressed."
-                            ),
+                            detail=detail,
+                            hint=hint,
                         )
         return await call_next(request)
 

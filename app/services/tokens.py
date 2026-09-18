@@ -240,9 +240,9 @@ _METHOD_SCOPE_MAP: dict[str, dict[str, str]] = {
         "tags": "posts:read",
         "search": "posts:read",
     },
-    "POST": {"posts": "posts:write", "tags": "posts:write"},
+    "POST": {"posts": "posts:write", "tags": "posts:write", "assets": "assets:write"},
     "PATCH": {"posts": "posts:write"},
-    "DELETE": {"posts": "posts:write"},
+    "DELETE": {"posts": "posts:write", "assets": "posts:write"},
 }
 
 

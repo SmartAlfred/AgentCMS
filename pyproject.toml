@@ -19,6 +19,7 @@ dependencies = [
     "markdown>=3.6",
     "markdown-it-py>=3.0,<4",
     "python-multipart>=0.0.9",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]

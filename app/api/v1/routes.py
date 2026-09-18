@@ -16,6 +16,7 @@ router = APIRouter()
 from app.api.v1.admin_moderation import router as admin_moderation_router  # noqa: E402
 from app.api.v1.admin_reviews import router as admin_reviews_router  # noqa: E402
 from app.api.v1.admin_tokens import router as admin_tokens_router  # noqa: E402
+from app.api.v1.assets import router as assets_router  # noqa: E402
 from app.api.v1.audit import router as audit_router  # noqa: E402
 from app.api.v1.posts import router as posts_router  # noqa: E402
 from app.api.v1.search import router as search_router  # noqa: E402
@@ -28,6 +29,7 @@ router.include_router(admin_reviews_router)
 router.include_router(admin_moderation_router)
 router.include_router(search_router)
 router.include_router(tags_router)
+router.include_router(assets_router)
 
 
 @router.get(

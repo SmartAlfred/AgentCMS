@@ -26,127 +26,74 @@ LLMS_TXT = """\
 
     https://your-instance.example.com
 
-All endpoints below are relative to this base.
-
 ## Authentication
 
-Two ways to authenticate:
-
-### Bearer token
+Bearer token or capability link (`/c/cap_...`):
 
     Authorization: Bearer acms_demo_abc123_not_real
 
-Get a token from the admin: `POST /v1/admin/tokens` (human-only).
-
-### Capability link
-
-A pre-scoped URL: `https://your-instance.example.com/c/cap_...`
-Visit the link to see what it can do, or pass it as a Bearer token.
-
-    Authorization: Bearer cap_abc123_not_real
+Token: `POST /v1/admin/tokens` (human-only).
 
 ## Search — check before writing
 
-Before creating, search for existing content:
-
-    GET /v1/search?q=your+topic&site=blog
-    GET /v1/search?q=your+topic&format=ids  — cheapest duplicate check ({id,slug} only)
+    GET /v1/search?q=topic&site=blog
+    GET /v1/search?q=topic&format=ids  — cheap duplicate check
 
 Filters: q, site, status, tag, author_label, from, to, limit, cursor.
 
 ## The 5 canonical calls
 
-### 1. Create a draft post
+### 1. Create a draft
 
-    curl -X POST https://your-instance.example.com/v1/sites/blog/posts \\
-      -H "Authorization: Bearer acms_demo_abc123_not_real" \\
+    curl -X POST /v1/sites/blog/posts \\
+      -H "Authorization: Bearer TOKEN" \\
       -H "Content-Type: application/json" \\
       -d '{"title": "Hello", "body_md": "# Hello\\n\\nWorld.", "tags": ["demo"]}'
 
-Returns 201 with the draft. Always a draft — status in the body is ignored.
+### 2. Read
 
-### 2. Read a post
+    curl /v1/posts/POST_ID -H "Authorization: Bearer TOKEN"
 
-    curl https://your-instance.example.com/v1/posts/POST_ID \\
-      -H "Authorization: Bearer acms_demo_abc123_not_real"
+### 3. Update
 
-Returns 200 with the full post object.
+    curl -X PATCH /v1/posts/POST_ID \\
+      -H "Authorization: Bearer TOKEN" -d '{"body_md": "# Updated."}'
 
-### 3. Update a post
+### 4. Publish
 
-    curl -X PATCH https://your-instance.example.com/v1/posts/POST_ID \\
-      -H "Authorization: Bearer acms_demo_abc123_not_real" \\
-      -H "Content-Type: application/json" \\
-      -d '{"body_md": "# Updated\\n\\nNew content."}'
+    curl -X POST /v1/posts/POST_ID/publish -H "Authorization: Bearer TOKEN"
 
-Returns 200 with the updated post.
+Idempotent — double-publish returns 200.
 
-### 4. Publish a post
+### 5. Trash
 
-    curl -X POST https://your-instance.example.com/v1/posts/POST_ID/publish \\
-      -H "Authorization: Bearer acms_demo_abc123_not_real"
+    curl -X DELETE /v1/posts/POST_ID -H "Authorization: Bearer TOKEN"
 
-Idempotent — double-publish returns 200, not an error.
+Soft-deletes. Undo: `POST …/unpublish`.
 
-### 5. Trash a post
+## Errors
 
-    curl -X DELETE https://your-instance.example.com/v1/posts/POST_ID \\
-      -H "Authorization: Bearer acms_demo_abc123_not_real"
+`application/problem+json` — read the `hint` field to fix requests.
 
-Soft-deletes the post. Returns 200.
-
-## Error format
-
-All errors are `application/problem+json` (RFC 9457):
-
-    {"title": "...", "detail": "...", "hint": "...", "code": "..."}
-
-**Read `hint`** — it tells you how to fix the request.
-
-### Common errors
-
-* **401** `unauthenticated` — missing or bad token. Get one at `/v1/admin/tokens`.
-* **409** `slug-conflict` — slug taken. Use `suggested_slug` from the response.
-* **422** `validation-error` — wrong fields. Check `GET /openapi.json`.
+Common: `unauthenticated` (401), `slug-conflict` (409), `validation-error` (422).
 
 ## Limits
 
-* Body size: 256 KB max.
-* Rate limit: 30 writes/min per token, 5 publishes/min per token.
-* Reads: 600/min per token, 300/min per unauthenticated IP.
-* Daily quotas: 500 writes/day, 50 publishes/day per token.
-* Capability links: 10 writes/min, 50 writes/day (lower because links can leak).
-* Posts are soft-deleted; undo within 60 s via `POST …/unpublish`.
+Rate: 30 writes/min, 600 reads/min. Daily: 500 writes, 50 publishes.
+Body: 256 KB. Undo: 60s. Backoff on 429 (read `Retry-After`).
 
-## Backoff and retry
+## Media uploads
 
-Every response includes rate-limit headers:
+1. `POST /v1/sites/{site}/assets` → presigned PUT URL + `markdown`
+2. `PUT <upload_url>` with file bytes
+3. `POST /v1/assets/{id}/finalize` → `sha256`, variants
 
-    X-RateLimit-Limit: 30
-    X-RateLimit-Remaining: 0
-    X-RateLimit-Reset: 1726650060
-    X-RateLimit-Bucket: writes
+Inline: `POST …/assets/inline` with `data_base64` (max 2 MB).
+SVG/HTML/executables rejected. EXIF stripped. URLs: `/media/{sha256}/{name}`.
 
-If you receive a `429` response:
+## Undo / Changelog
 
-1. Read the `Retry-After` header — wait at least that many seconds.
-2. Use **exponential backoff with jitter**: wait 1s, 2s, 4s, 8s + random jitter.
-3. Retry the same request (your `Idempotency-Key` is preserved).
-4. Never retry `4xx` errors (except `429` and `503`).
-5. Always retry `5xx` errors with backoff.
-
-## Undo / revert
-
-    curl -X POST https://your-instance.example.com/v1/posts/POST_ID/unpublish \\
-      -H "Authorization: Bearer acms_demo_abc123_not_real"
-
-Moves a published post back to draft.
-
-## Changelog
-
-    GET /changelog
-
-Append-only list of API changes.
+`POST /v1/posts/ID/unpublish` — revert to draft. `GET /changelog` — changes.
 
 ## Full reference
 
@@ -182,6 +129,14 @@ def build_instruction_sheet(base_url: str) -> str:
         "  POST   /v1/posts/{id}/publish         — publish (idempotent)\n"
         "  DELETE /v1/posts/{id}                 — trash\n"
         "  POST   /v1/posts/{id}/unpublish       — revert to draft\n"
+        "\n"
+        "Media uploads (requires Authorization header):\n"
+        "  POST   /v1/sites/{site}/assets         — presigned upload URL\n"
+        "  POST   /v1/sites/{site}/assets/inline  — inline upload (base64, max 2MB)\n"
+        "  POST   /v1/assets/{id}/finalize        — validate, sniff, generate variants\n"
+        "  GET    /v1/sites/{site}/assets          — list assets\n"
+        "  GET    /v1/assets/{id}                 — get asset details\n"
+        "  DELETE /v1/assets/{id}                 — soft-delete asset\n"
         "\n"
         "Search & filtering:\n"
         "  GET /v1/search?q=...&site=...&status=...  — full-text search\n"

@@ -200,6 +200,14 @@ Uploaded media files.
 | `byte_size` | `bigint` | NULLABLE | |
 | `storage_key` | `varchar(1024)` | NOT NULL | S3 key or local path |
 | `alt_text` | `text` | NULLABLE | |
+| `kind` | `varchar(20)` | NOT NULL, default `file` | `image` or `file` |
+| `sha256` | `varchar(64)` | NULLABLE, indexed | SHA-256 of the file content |
+| `width` | `integer` | NULLABLE | Image width in pixels |
+| `height` | `integer` | NULLABLE | Image height in pixels |
+| `variant_paths` | `jsonb` | NULLABLE, default `{}` | Paths to generated variants |
+| `status` | `varchar(20)` | NOT NULL, default `pending` | `pending`, `ready`, `failed` |
+| `magic_content_type` | `varchar(128)` | NULLABLE | Detected content type from magic bytes |
+| `deleted_at` | `datetime` | NULLABLE | Set on soft delete |
 | `created_by_actor_id` | `uuid` | NULLABLE | |
 | `created_at` | `datetime` | NOT NULL, default `now()` | |
 
