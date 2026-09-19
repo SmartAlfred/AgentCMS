@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 from starlette.responses import HTMLResponse, JSONResponse
 
+from app.config import get_settings
 from app.docs_content import (
     LLMS_TXT,
     build_changelog,
@@ -21,6 +22,14 @@ from app.docs_content import (
 )
 
 router = APIRouter(tags=["agent-docs"])
+
+
+def _get_base_url(request: Request) -> str:
+    """Get the canonical base URL from settings or request."""
+    settings = get_settings()
+    if settings.public_base_url:
+        return settings.public_base_url.rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +71,7 @@ def root(request: Request) -> Response:
     * ``Accept: text/html`` (default for browsers) → human landing page
     """
     accept = request.headers.get("accept", "")
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _get_base_url(request)
 
     if "text/html" in accept:
         html = build_landing_page_html(base_url)
@@ -87,7 +96,7 @@ def root(request: Request) -> Response:
 )
 def discover(request: Request) -> dict[str, Any]:
     """Tiny JSON so an agent can orient itself in one call."""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _get_base_url(request)
     return build_discover_json(base_url)
 
 

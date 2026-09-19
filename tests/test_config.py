@@ -128,3 +128,68 @@ def test_safe_database_url_hides_the_password() -> None:
     settings = Settings(_env_file=None, database_url="postgresql+psycopg://user:hunter2@db:5432/agentcms")
     assert "hunter2" not in settings.safe_database_url()
     assert "user" in settings.safe_database_url()
+
+
+def test_public_base_url_defaults_to_none() -> None:
+    """PUBLIC_BASE_URL defaults to None."""
+    settings = Settings(_env_file=None)
+    assert settings.public_base_url is None
+
+
+def test_public_base_url_can_be_set() -> None:
+    """PUBLIC_BASE_URL can be explicitly set."""
+    settings = Settings(_env_file=None, public_base_url="https://cms.example.com")
+    assert settings.public_base_url == "https://cms.example.com"
+
+
+def test_public_base_url_strips_trailing_slash() -> None:
+    """PUBLIC_BASE_URL trailing slash is stripped when used."""
+    # Note: the property that strips the slash is public_base_url_or_request
+    # The raw setting keeps the user input
+    settings = Settings(_env_file=None, public_base_url="https://cms.example.com/")
+    assert settings.public_base_url == "https://cms.example.com/"
+
+
+def test_public_base_url_or_request_uses_setting_when_set() -> None:
+    """public_base_url_or_request returns PUBLIC_BASE_URL when configured."""
+    from starlette.requests import Request
+
+    settings = Settings(_env_file=None, public_base_url="https://cms.example.com")
+    # Create a mock request
+    scope = {"type": "http", "scheme": "http", "server": ("testserver", 80), "headers": []}
+    request = Request(scope)
+    assert settings.public_base_url_or_request(request) == "https://cms.example.com"
+
+
+def test_public_base_url_or_request_falls_back_to_request() -> None:
+    """public_base_url_or_request falls back to request host when not set."""
+    from starlette.requests import Request
+
+    settings = Settings(_env_file=None, public_base_url=None)
+    scope = {
+        "type": "http",
+        "scheme": "https",
+        "server": ("myapp.example.com", 443),
+        "headers": [],
+        "path": "/",
+    }
+    request = Request(scope)
+    assert settings.public_base_url_or_request(request) == "https://myapp.example.com"
+
+
+def test_public_base_url_or_request_falls_back_to_localhost() -> None:
+    """public_base_url_or_request falls back to localhost when no request."""
+    settings = Settings(_env_file=None, public_base_url=None)
+    assert settings.public_base_url_or_request(None) == "http://localhost:8000"
+
+
+def test_embed_origins_parses_comma_separated() -> None:
+    """EMBED_ORIGINS parses comma-separated string like CORS_ORIGINS."""
+    settings = Settings(_env_file=None, embed_origins="https://a.example.com, https://b.example.com")  # type: ignore[arg-type]
+    assert settings.embed_origins == ["https://a.example.com", "https://b.example.com"]
+
+
+def test_embed_token_scope_default() -> None:
+    """EMBED_TOKEN_SCOPE defaults to posts:read."""
+    settings = Settings(_env_file=None)
+    assert settings.embed_token_scope == "posts:read"

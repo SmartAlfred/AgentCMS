@@ -91,7 +91,7 @@ class Post(Base):
     revisions = relationship(
         "PostRevision", back_populates="post", lazy="selectin", order_by="PostRevision.revision.desc()"
     )
-    tag_links = relationship("PostTag", back_populates="post", lazy="noload")
+    tag_links = relationship("PostTag", back_populates="post")
     review = relationship(
         "Review",
         back_populates="post",

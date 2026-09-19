@@ -1,0 +1,124 @@
+# Production-shaped stack (#31): API + Postgres + Caddy reverse proxy.
+# Runs with: docker compose -f deploy/compose/docker-compose.prod.yml up -d
+# → live app on HTTPS (with domain) or self-signed (localhost), zero source edits.
+#
+# Required env vars (see deploy/.env.example):
+#   SECRET_KEY, POSTGRES_PASSWORD, DOMAIN (optional), CADDY_EMAIL (optional)
+#   EMBED_ORIGINS (comma-separated origins allowed to embed, e.g. "https://example.com")
+#
+# The stack:
+#   - db: PostgreSQL 16 with named volume for data
+#   - migrate: one-shot migration job (runs before api)
+#   - api: AgentCMS application server
+#   - caddy: reverse proxy with automatic TLS (Let's Encrypt) or self-signed
+#
+# Health gating:
+#   - db has pg_isready healthcheck
+#   - migrate depends on db:healthy
+#   - api depends on db:healthy AND migrate:completed
+#   - caddy depends on api:healthy
+
+name: agentcms-prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentcms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the environment}
+      POSTGRES_DB: ${POSTGRES_DB:-agentcms}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentcms} -d ${POSTGRES_DB:-agentcms}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+    # [prod] For hosted Postgres use vendor native backup (RDS snapshots + PITR).
+    # For self-hosted, see docs/ops/runbook.md §Backups for archive_command + basebackup.
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: agentcms-migrate:local
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: production
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: ${TAG:-agentcms:local}
+    environment:
+      APP_ENV: production
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+      HOST: 0.0.0.0
+      PORT: "8000"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      METRICS_TOKEN: ${METRICS_TOKEN}
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-agentcms}
+      TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-0.1}
+      BACKUP_STORE_URL: ${BACKUP_STORE_URL}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE}
+      BACKUP_RETENTION_DAILY: ${BACKUP_RETENTION_DAILY:-30}
+      BACKUP_RETENTION_MONTHLY: ${BACKUP_RETENTION_MONTHLY:-12}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET:-agentcms-media}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # Embed configuration
+      EMBED_ORIGINS: ${EMBED_ORIGINS:-}
+      EMBED_TOKEN_SCOPE: ${EMBED_TOKEN_SCOPE:-posts:read}
+    ports:
+      - "127.0.0.1:8000:8000"  # Only exposed to Caddy on localhost
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+      EMBED_ORIGINS: ${EMBED_ORIGINS:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:2019/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  pgdata-prod:
+  caddy-data:
+  caddy-config:

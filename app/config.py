@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from starlette.requests import Request
 
 DevSecretKey = str
 
@@ -66,10 +67,20 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     s3_public_base_url: str | None = None
 
+    # -- public URL -----------------------------------------------------------
+    # Canonical public base URL for generated links (export, embed, llms.txt, docs).
+    # When unset, falls back to the request host (for dynamic endpoints) or
+    # documented localhost (for static docs). Must be a public HTTPS URL in production.
+    public_base_url: str | None = None
+
     # -- content defaults ---------------------------------------------------
     default_site_slug: str = "blog"
     default_publish_mode: PublishMode = "auto"
     idempotency_retention_hours: int = 24
+
+    # -- embed configuration (#31) -------------------------------------------
+    embed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    embed_token_scope: str = "posts:read"
 
     # -- capability links (#6) -----------------------------------------------
     capability_default_ttl_minutes: int = 60
@@ -118,7 +129,7 @@ class Settings(BaseSettings):
     # mode (usually "production").  Empty = diff against the DATABASE_URL.
     backup_source_url: str = ""
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "embed_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str):
@@ -157,6 +168,20 @@ class Settings(BaseSettings):
     @property
     def docs_url(self) -> str:
         return f"http://{self.host}:{self.port}/docs"
+
+    def public_base_url_or_request(self, request: Request | None = None) -> str:
+        """Return the canonical public base URL.
+
+        Priority:
+        1. Explicit PUBLIC_BASE_URL setting (for static exports, llms.txt, etc.)
+        2. Request host (for dynamic endpoints like /embed, /v1/discover)
+        3. Documented localhost fallback (for static docs generation)
+        """
+        if self.public_base_url:
+            return self.public_base_url.rstrip("/")
+        if request is not None:
+            return f"{request.url.scheme}://{request.url.netloc}"
+        return "http://localhost:8000"
 
     def safe_database_url(self) -> str:
         """Database URL with the password masked, safe for logs."""

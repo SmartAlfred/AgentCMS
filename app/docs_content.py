@@ -13,18 +13,23 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config import get_settings
+
 # ---------------------------------------------------------------------------
 # llms.txt — under ~4 KB
 # ---------------------------------------------------------------------------
 
-LLMS_TXT = """\
+
+def _build_llms_txt(base_url: str) -> str:
+    """Build the llms.txt instruction sheet with the given base URL."""
+    return f"""\
 # AgentCMS
 
 > API-first CMS whose first user is an AI agent.
 
 ## Base URL
 
-    https://your-instance.example.com
+    {base_url}
 
 ## Authentication
 
@@ -48,7 +53,7 @@ Filters: q, site, status, tag, author_label, from, to, limit, cursor.
     curl -X POST /v1/sites/blog/posts \\
       -H "Authorization: Bearer TOKEN" \\
       -H "Content-Type: application/json" \\
-      -d '{"title": "Hello", "body_md": "# Hello\\n\\nWorld.", "tags": ["demo"]}'
+      -d '{{"title": "Hello", "body_md": "# Hello\\n\\nWorld.", "tags": ["demo"]}}'
 
 ### 2. Read
 
@@ -57,7 +62,7 @@ Filters: q, site, status, tag, author_label, from, to, limit, cursor.
 ### 3. Update
 
     curl -X PATCH /v1/posts/POST_ID \\
-      -H "Authorization: Bearer TOKEN" -d '{"body_md": "# Updated."}'
+      -H "Authorization: Bearer TOKEN" -d '{{"body_md": "# Updated."}}'
 
 ### 4. Publish
 
@@ -84,12 +89,12 @@ Body: 256 KB. Undo: 60s. Backoff on 429 (read `Retry-After`).
 
 ## Media uploads
 
-1. `POST /v1/sites/{site}/assets` → presigned PUT URL + `markdown`
+1. `POST /v1/sites/{{site}}/assets` → presigned PUT URL + `markdown`
 2. `PUT <upload_url>` with file bytes
-3. `POST /v1/assets/{id}/finalize` → `sha256`, variants
+3. `POST /v1/assets/{{id}}/finalize` → `sha256`, variants
 
 Inline: `POST …/assets/inline` with `data_base64` (max 2 MB).
-SVG/HTML/executables rejected. EXIF stripped. URLs: `/media/{sha256}/{name}`.
+SVG/HTML/executables rejected. EXIF stripped. URLs: `/media/{{sha256}}/{{name}}`.
 
 ## Undo / Changelog
 
@@ -100,6 +105,15 @@ SVG/HTML/executables rejected. EXIF stripped. URLs: `/media/{sha256}/{name}`.
     GET /openapi.json  — OpenAPI 3.1 contract
     GET /docs          — interactive Scalar reference
 """
+
+
+def _default_base_url() -> str:
+    """Return the default base URL for static generation (docs, llms.txt)."""
+    settings = get_settings()
+    return settings.public_base_url or "https://cms.example.com"
+
+
+LLMS_TXT = _build_llms_txt(_default_base_url())
 
 # ---------------------------------------------------------------------------
 # Root instruction sheet (text/plain for models)

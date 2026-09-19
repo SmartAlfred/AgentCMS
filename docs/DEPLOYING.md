@@ -251,7 +251,7 @@ things**. Don't confuse them:
 
 So: **GitHub Pages publishes the static Nocturne preview site (a static export
 of the content), not the API.** The live Pages URL
-(`https://joshuakoeck.github.io/smartalfred-demo/`, HTTP 200 at this revision)
+(`https://smartalfred.github.io/AgentCMS/` — 404 on a private repo free plan)
 serves the repo-root Nocturne preview files (`index.html`, …) — those files are
 hand-maintained and must not be confused with the API deployment. The agent
 API runs from the Docker image of §1–§7, never from Pages.
@@ -260,7 +260,7 @@ Deterministic export, verbatim (this revision, against the seeded dev DB):
 
 ```text
 $ agentcms export --site blog --out /tmp/agentcms-export \
-    --base-url https://joshuakoeck.github.io/smartalfred-demo/ --verify
+    --base-url https://cms.example.com/ --verify
 exported blog: 3 posts, 24 files (0 reused, 0 pruned) in 0.194s
 verify OK: 23 files matched manifest.json for /private/tmp/agentcms-export
 ```

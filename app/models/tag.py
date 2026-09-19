@@ -46,5 +46,5 @@ class PostTag(Base):
     )
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
-    post = relationship("Post", back_populates="tag_links", lazy="noload")
-    tag = relationship("Tag", back_populates="post_links", lazy="noload")
+    post = relationship("Post", back_populates="tag_links")
+    tag = relationship("Tag", back_populates="post_links")

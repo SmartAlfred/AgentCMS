@@ -17,7 +17,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.models.post import Post
 from app.models.redirect import Redirect
@@ -79,7 +79,9 @@ def list_published_posts(
 
     query = (
         session.query(Post)
-        .options(joinedload(Post.tag_links).joinedload(PostTag.tag))
+        .options(
+            selectinload(Post.tag_links).selectinload(PostTag.tag),
+        )
         .filter(
             Post.site_id == site.id,
             Post.status == "published",

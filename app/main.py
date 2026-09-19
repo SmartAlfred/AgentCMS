@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
 from app.api.docs import router as docs_router
+from app.api.embed import router as embed_router
 from app.api.health import router as health_router
 from app.api.llms import router as llms_router
 from app.config import Settings, get_settings
@@ -111,6 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.docs_enabled:
         app.include_router(docs_router)
     app.include_router(llms_router)
+    app.include_router(embed_router)
     register_v1_routes(app)
     # Mounted before the public router: its catch-alls (/{site_slug}) would
     # otherwise swallow /mcp, and Starlette matches routes in registration order.

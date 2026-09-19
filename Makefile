@@ -119,8 +119,13 @@ fmt: install ## Auto-format and auto-fix
 	$(RUFF) format .
 	$(RUFF) check --fix .
 
+.PHONY: check-doc-urls
+check-doc-urls: install ## Check documented live URLs return 2xx
+	$(PY) -m scripts.check_doc_urls --fail-fast
+
+
 .PHONY: gate
-gate: lint test ## CI gate: the lint + test jobs of .github/workflows/ci.yml
+gate: lint test check-doc-urls ## CI gate: lint + test + doc URL check
 
 .PHONY: gate-migrations
 gate-migrations: install ## CI gate: the migrations job (DESTRUCTIVE: wipes every table in $$DATABASE_URL)
