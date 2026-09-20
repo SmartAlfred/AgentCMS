@@ -301,6 +301,22 @@ def scratch_database_paths(scratch_dir: Path) -> tuple[Path, Path]:
     return pgdata, log
 
 
+def _locale_env() -> dict[str, str]:
+    """Return an environment dict with locale variables pinned for initdb.
+
+    PostgreSQL 18+ refuses to run initdb when LANG, LC_ALL, and LC_CTYPE are
+    all unset. This helper ensures they are set to C.UTF-8 (or preserves any
+    existing values) so that a throwaway cluster can be created in minimal
+    environments (containers, CI, etc.).
+    """
+    import os
+
+    env = dict(os.environ)
+    for var, default in (("LANG", "C.UTF-8"), ("LC_ALL", "C.UTF-8"), ("LC_CTYPE", "C.UTF-8")):
+        env.setdefault(var, default)
+    return env
+
+
 def init_scratch_cluster(scratch_dir: Path) -> Path:
     """initdb a scratch cluster (unprivileged), returns the PGDATA path."""
     pgdata, _log = scratch_database_paths(scratch_dir)
@@ -314,6 +330,7 @@ def init_scratch_cluster(scratch_dir: Path) -> Path:
         [initdb, "-D", str(pgdata), "-U", "postgres", "--no-instructions"],
         capture_output=True,
         check=False,
+        env=_locale_env(),
     )
     if proc.returncode != 0:
         raise BackupError(f"initdb failed: {proc.stderr.decode()[-800:]}")

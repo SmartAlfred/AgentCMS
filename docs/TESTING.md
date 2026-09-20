@@ -139,6 +139,42 @@ you *actually run* the documented commands were found and fixed in this push
   modules import it — the production image could not boot. It is now a core
   dependency.
 
+## Locale requirement for `initdb` (#34)
+
+PostgreSQL 18+ refuses to run `initdb` when `LANG`, `LC_ALL`, and `LC_CTYPE`
+are **all unset** — exactly the environment you get from `systemd`, `launchd`,
+`docker exec`, or a minimal container without a login shell. The symptom is:
+
+```text
+initdb: error: invalid locale settings; check LANG and LC_* environment variables
+```
+
+**Fix in this repo:** every internal `initdb` call site (`tests/pg.py`,
+`scripts/pgbackup.py`) now passes an explicit locale environment that defaults
+to `C.UTF-8`:
+
+```python
+# tests/pg.py::_locale_env()  — used by start_initdb_postgres()
+# scripts/pgbackup.py::_locale_env()  — used by init_scratch_cluster()
+
+
+def _locale_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for var, default in (("LANG", "C.UTF-8"), ("LC_ALL", "C.UTF-8"), ("LC_CTYPE", "C.UTF-8")):
+        env.setdefault(var, default)
+    return env
+```
+
+**For self-hosters:** if you run the test suite or the restore drill in a
+container/CI job without a locale, you don't need to do anything — the helpers
+pin `C.UTF-8` automatically. If you invoke `initdb`/`pg_ctl` directly in your
+own scripts, set `LANG=C.UTF-8 LC_ALL=C.UTF-8 LC_CTYPE=C.UTF-8` (or any valid
+UTF-8 locale) before the call.
+
+**CI regression test:** the `test-locale-scrubbed` job in
+`.github/workflows/ci.yml` runs `pytest -q` under `env -u LANG -u LC_ALL -u
+LC_CTYPE -u LANGUAGE` and must stay green.
+
 ## Rules of thumb
 
 - Never run the gate against a database with data you care about
