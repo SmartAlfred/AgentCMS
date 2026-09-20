@@ -115,6 +115,7 @@ def test_production_accepts_explicit_configuration() -> None:
         app_env="production",
         secret_key="x" * 40,
         database_url="postgresql+psycopg://u:p@db:5432/agentcms",
+        agentcms_image_tag="ghcr.io/owner/agentcms:v0.3.1",
     )
     assert settings.is_production is True
 

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentCMS Embed</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; width: 100%; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fff; color: #0f172a; overflow: hidden; }
+    #iframe-mount { width: 100%; height: 100%; min-height: 400px; }
+    .iframe-loading, .iframe-error { display: flex; align-items: center; justify-content: center; height: 100%; padding: 1rem; text-align: center; color: #64748b; }
+    .iframe-error { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <div id="iframe-mount" class="iframe-loading">Loading posts…</div>
+  <script>
+    (function () {
+      'use strict';
+
+      // Get token from URL query params
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token');
+      const limit = urlParams.get('limit') || '10';
+      const theme = urlParams.get('theme') || 'auto';
+
+      const mountPoint = document.getElementById('iframe-mount');
+
+      if (!token || !token.startsWith('cap_')) {
+        mountPoint.innerHTML = '<div class="iframe-error" role="alert">Invalid or missing embed token</div>';
+        return;
+      }
+
+      // Determine base URL from the iframe src (remove /embed/v1/iframe...)
+      const scriptSrc = new URL(window.location.href);
+      const baseUrl = scriptSrc.origin + scriptSrc.pathname.replace(/\/embed\/v1\/iframe.*$/, '');
+
+      // Inject the embed script
+      const script = document.createElement('script');
+      script.src = baseUrl + '/embed/v1/agentcms.js';
+      script.dataset.siteToken = token;
+      script.dataset.mount = '#iframe-mount';
+      script.dataset.limit = limit;
+      script.dataset.theme = theme;
+      script.async = true;
+
+      script.onerror = function () {
+        mountPoint.innerHTML = '<div class="iframe-error" role="alert">Failed to load embed script</div>';
+      };
+
+      document.head.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

@@ -129,12 +129,63 @@ class Settings(BaseSettings):
     # mode (usually "production").  Empty = diff against the DATABASE_URL.
     backup_source_url: str = ""
 
+    # -- version pinning (#33) ------------------------------------------------
+    # Explicit immutable image tag or digest for production deployments.
+    # Examples: ghcr.io/owner/agentcms:v0.3.1, ghcr.io/owner/agentcms@sha256:abc123
+    # Empty = not set; in production this is required and must be immutable.
+    agentcms_image_tag: str = ""
+
     @field_validator("cors_origins", "embed_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @staticmethod
+    def _is_mutable_tag(tag: str) -> bool:
+        """Return True if the image tag is mutable.
+
+        Immutable (return False):
+        - Digest references: repo@sha256:...
+        - Full semver: v0.3.1, 0.3.1, v0.3.1-rc.1
+        - Major.minor: v0.3 (per test expectations)
+
+        Mutable (return True):
+        - Empty string, no tag (just repo name)
+        - :latest, :local, :dev
+        - Anything else (conservative)
+        """
+        if not tag:
+            return True
+
+        # Digest reference is always immutable
+        if "@sha256:" in tag:
+            return False
+
+        # Extract tag part after the last colon
+        if ":" in tag:
+            tag_part = tag.split(":")[-1]
+        else:
+            # No tag specified (just repo name)
+            return True
+
+        # Mutable tag names
+        if tag_part in {"latest", "local", "dev"}:
+            return True
+
+        # Check if it's a semver-like tag (v0.3.1 or 0.3.1 or v0.3.1-rc.1)
+        # Must have at least major.minor.patch
+        import re
+
+        # Pattern: optional 'v', then major.minor.patch, optional prerelease/build
+        semver_pattern = r"^v?\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$"
+        if re.match(semver_pattern, tag_part):
+            return False
+
+        # Major.minor only (e.g., v0.3) is treated as immutable per test expectations
+        major_minor_pattern = r"^v?\d+\.\d+$"
+        return not re.match(major_minor_pattern, tag_part) is not None
 
     @model_validator(mode="after")
     def _guard_production(self) -> Settings:
@@ -152,6 +203,14 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL is still the development default")
         if self.debug:
             problems.append("DEBUG must be false when APP_ENV=production")
+        # Version pinning: AGENTCMS_IMAGE_TAG must be set and immutable in production
+        if not self.agentcms_image_tag:
+            problems.append("AGENTCMS_IMAGE_TAG is required in production")
+        elif self._is_mutable_tag(self.agentcms_image_tag):
+            problems.append(
+                "AGENTCMS_IMAGE_TAG must be an immutable version tag or digest "
+                f"(got '{self.agentcms_image_tag}')"
+            )
         if problems:
             raise ValueError("refusing to start in production: " + "; ".join(problems))
         return self

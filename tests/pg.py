@@ -40,6 +40,20 @@ _LOCAL_PG_BIN_GLOBS = (
 )
 
 
+def _locale_env() -> dict[str, str]:
+    """Return an environment dict with locale variables pinned for initdb.
+
+    PostgreSQL 18+ refuses to run initdb when LANG, LC_ALL, and LC_CTYPE are
+    all unset. This helper ensures they are set to C.UTF-8 (or preserves any
+    existing values) so that a throwaway cluster can be created in minimal
+    environments (containers, CI, etc.).
+    """
+    env = dict(os.environ)
+    for var, default in (("LANG", "C.UTF-8"), ("LC_ALL", "C.UTF-8"), ("LC_CTYPE", "C.UTF-8")):
+        env.setdefault(var, default)
+    return env
+
+
 def _run(cmd: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(list(cmd), capture_output=True, text=True, check=False, **kwargs)  # type: ignore[arg-type]
 
@@ -185,7 +199,8 @@ def start_initdb_postgres() -> EphemeralPostgres:
             "--no-sync",
             "-E",
             "UTF8",
-        ]
+        ],
+        env=_locale_env(),
     )
     if init.returncode != 0:
         shutil.rmtree(datadir, ignore_errors=True)
@@ -209,7 +224,8 @@ def start_initdb_postgres() -> EphemeralPostgres:
             "-t",
             "60",
             "start",
-        ]
+        ],
+        env=_locale_env(),
     )
     if started.returncode != 0:
         shutil.rmtree(datadir, ignore_errors=True)

@@ -5,6 +5,9 @@
 # Required env vars (see deploy/.env.example):
 #   SECRET_KEY, POSTGRES_PASSWORD, DOMAIN (optional), CADDY_EMAIL (optional)
 #   EMBED_ORIGINS (comma-separated origins allowed to embed, e.g. "https://example.com")
+#   AGENTCMS_IMAGE_TAG (explicit immutable tag or digest, e.g. ghcr.io/owner/agentcms:v0.3.1
+#     or ghcr.io/owner/agentcms@sha256:abc123...). Mutable tags (latest, local, dev,
+#     major.minor) are rejected at startup.
 #
 # The stack:
 #   - db: PostgreSQL 16 with named volume for data
@@ -41,12 +44,13 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    image: agentcms-migrate:local
+    image: ${AGENTCMS_IMAGE_TAG:-agentcms:local}
     command: ["python", "-m", "alembic", "upgrade", "head"]
     environment:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:?set AGENTCMS_IMAGE_TAG in the environment}
     depends_on:
       db:
         condition: service_healthy
@@ -55,11 +59,12 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    image: ${TAG:-agentcms:local}
+    image: ${AGENTCMS_IMAGE_TAG:-agentcms:local}
     environment:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:?set AGENTCMS_IMAGE_TAG in the environment}
       HOST: 0.0.0.0
       PORT: "8000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

@@ -19,6 +19,8 @@ OPS cheat-sheet:
 | Restore drill | `make restore-drill` |
 | Migration-gated deploy | `./scripts/deploy.sh` |
 | One-command rollback | `./scripts/deploy.sh --rollback` |
+| Version-pinned upgrade | `./scripts/upgrade.sh <NEW_TAG>` |
+| Tested rollback | `./scripts/rollback.sh` |
 
 ---
 
@@ -182,6 +184,164 @@ policy note in the repo docs).
 
 **Recovery:** after rollback, confirm `/readyz` and `/status` are green, then
 re-classify the failed release (config, migrations, health threshold).
+
+---
+
+## 4b. Version-pinned upgrade + tested rollback (#33)
+
+**Trigger:** a new AgentCMS release is published and you want to upgrade your
+self-hosted instance without data loss, with a tested rollback path if the
+new release is broken.
+
+**What you'd see:** a new immutable image tag is available (e.g.
+`ghcr.io/owner/agentcms:v0.3.2` or a digest
+`ghcr.io/owner/agentcms@sha256:abc123...`). The current instance runs an older
+immutable tag (recorded in `.deploy-last-tag`).
+
+**Prerequisites (one-time):**
+
+- `BACKUP_PASSPHRASE` set in `deploy/.env` (same passphrase used for nightly
+  `make backup`).
+- The stack is running via `compose.prod.yml` with `AGENTCMS_IMAGE_TAG`
+  pinned to the current release.
+- `POSTGRES_PASSWORD`, `SECRET_KEY` and other production secrets are in
+  `deploy/.env`.
+
+**Drill steps (upgrade):**
+
+1. Verify the current release and that the stack is healthy:
+   ```bash
+   cat .deploy-last-tag
+   curl -fsS https://<your-domain>/healthz
+   curl -fsS https://<your-domain>/readyz
+   curl -fsS https://<your-domain>/v1/version
+   ```
+   Expect: `/healthz` and `/readyz` return 200; `/v1/version` shows the
+   current image tag.
+
+2. Run the upgrade to the new tag (pull → preflight → backup → migrate → restart → smoke):
+   ```bash
+   AGENTCMS_IMAGE_TAG=ghcr.io/owner/agentcms:v0.3.2 \
+   BACKUP_PASSPHRASE=<your-passphrase> \
+   ./scripts/upgrade.sh ghcr.io/owner/agentcms:v0.3.2
+   ```
+   Expected output (abridged):
+   ```
+   [UPGRADE] Starting upgrade from ghcr.io/owner/agentcms:v0.3.1 to ghcr.io/owner/agentcms:v0.3.2
+   [UPGRADE] Pulling new image: ghcr.io/owner/agentcms:v0.3.2
+   [UPGRADE] Running preflight checks...
+   [UPGRADE] Preflight passed: no pending migrations
+   [UPGRADE] Recording current alembic revision for rollback safety...
+   [UPGRADE] Recorded pre-upgrade alembic revision: abc123
+   [UPGRADE] Taking pre-upgrade backup...
+   [UPGRADE] Pre-upgrade backup verified: .backups/dumps/20260115-023000.dump.enc
+   [UPGRADE] Running database migrations...
+   [UPGRADE] Migrations applied successfully
+   [UPGRADE] Restarting API with new image...
+   [UPGRADE] API restarted and healthy
+   [UPGRADE] Running post-upgrade smoke tests...
+   [UPGRADE] Waiting for /healthz...
+   [UPGRADE] /healthz OK
+   [UPGRADE] Waiting for /readyz...
+   [UPGRADE] /readyz OK
+   [UPGRADE] Checking /v1/version...
+   [UPGRADE] Version endpoint responded: {"version":"0.3.2","git_sha":"...","migration_head":"def456"}
+   [UPGRADE] All smoke tests passed
+   [UPGRADE] Upgrade complete: now running ghcr.io/owner/agentcms:v0.3.2
+   ```
+
+   **Key guarantees:**
+   - The new image is pulled *before* any state change.
+   - `alembic check` runs read-only against the live DB; if pending
+     migrations or drift are detected, the upgrade aborts and the app is
+     untouched.
+   - The current alembic revision is recorded (`.pre-upgrade-alembic`).
+   - An encrypted `pg_dump` backup is taken **before** any migration runs
+     (`.pre-upgrade-dump` + `.pre-upgrade-tag`).
+   - Migrations run in a one-shot container (`migrate` service). If they
+     fail, the old app continues serving on the old schema.
+   - The API is restarted with a rolling update (compose `--wait` polls
+     `/readyz`). Traffic is never cut to an unhealthy container.
+   - Smoke tests verify `/healthz`, `/readyz`, and `/v1/version`.
+
+3. Verify the upgrade manually:
+   ```bash
+   curl -fsS https://<your-domain>/healthz
+   curl -fsS https://<your-domain>/readyz
+   curl -fsS https://<your-domain>/v1/version
+   # Spot-check a public page or capability-link endpoint
+   curl -fsS https://<your-domain>/blog/posts.json
+   ```
+
+**If the upgrade appears stuck:**
+- Check `docker compose -f compose.prod.yml logs -f migrate` for migration
+  output (the most common stall point).
+- Check `docker compose -f compose.prod.yml logs -f api` for container
+  startup errors.
+- `docker compose -f compose.prod.yml ps` shows container status.
+- The pre-upgrade dump (`.pre-upgrade-dump`) and tag (`.pre-upgrade-tag`)
+  exist — you can roll back at any point before the smoke tests pass.
+
+**Drill steps (rollback):**
+
+If the new release is broken (errors, regressions, performance), roll back
+to the previous image and database state:
+
+```bash
+BACKUP_PASSPHRASE=<your-passphrase> \
+./scripts/rollback.sh
+```
+
+Expected output (abridged):
+```
+[ROLLBACK] Starting rollback from ghcr.io/owner/agentcms:v0.3.2 to ghcr.io/owner/agentcms:v0.3.1
+[ROLLBACK] Checking rollback safety: pre-upgrade revision was abc123
+[ROLLBACK] Current alembic revision: def456
+[ROLLBACK] Schema differs from backup; checking if downgrade to abc123 is possible...
+[ROLLBACK] Downgrade path exists and appears non-destructive — rollback is safe
+[ROLLBACK] Restoring pre-upgrade database dump: .backups/dumps/20260115-023000.dump.enc
+[ROLLBACK] Database restored successfully from pre-upgrade dump
+[ROLLBACK] Restarting API with previous image: ghcr.io/owner/agentcms:v0.3.1
+[ROLLBACK] API restarted and healthy on ghcr.io/owner/agentcms:v0.3.1
+[ROLLBACK] Running post-rollback smoke tests...
+[ROLLBACK] Waiting for /healthz...
+[ROLLBACK] /healthz OK
+[ROLLBACK] Waiting for /readyz...
+[ROLLBACK] /readyz OK
+[ROLLBACK] Checking /v1/version...
+[ROLLBACK] Version endpoint responded: {"version":"0.3.1","git_sha":"...","migration_head":"abc123"}
+[ROLLBACK] All smoke tests passed
+[ROLLBACK] Rollback complete: now running ghcr.io/owner/agentcms:v0.3.1
+```
+
+**Rollback safety guard:**
+The rollback refuses to proceed (exit code 2) when:
+- No pre-upgrade state exists (`.pre-upgrade-tag`, `.pre-upgrade-dump`,
+  or `.pre-upgrade-alembic` missing).
+- The current alembic revision differs from the pre-upgrade revision **and**
+  the generated downgrade SQL contains destructive operations (`DROP TABLE`,
+  `DROP COLUMN`, `DELETE FROM`, `TRUNCATE`).
+- The downgrade SQL generation itself fails (no downgrade path).
+
+In these cases the script prints an explicit message and leaves the app
+running on the new image. You must restore from an external backup manually.
+
+**What to check first if rollback fails:**
+1. `cat .pre-upgrade-tag .pre-upgrade-dump .pre-upgrade-alembic` — are the
+   state files present and readable?
+2. `BACKUP_PASSPHRASE` — is it set and correct?
+3. `docker compose -f compose.prod.yml logs migrate` — does `alembic downgrade
+   <pre-upgrade-rev> --sql` emit errors or destructive statements?
+4. If the schema truly cannot be downgraded, you must restore the pre-upgrade
+   dump into a fresh database and point a new stack at it (disaster recovery,
+   not rollback).
+
+**Measured runtime targets (fill in §7):**
+
+| Drill | Target |
+| --- | ---: |
+| Upgrade (pull → backup → migrate → restart → smoke) | < 5 min |
+| Rollback (guard → restore → restart → smoke) | < 3 min |
 
 ---
 

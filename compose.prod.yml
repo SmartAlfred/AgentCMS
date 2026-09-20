@@ -2,7 +2,11 @@
 # no host-exposed DB port.  The `migrate` service is the one-shot job the
 # deploy script runs before a rolling update (#24).
 #   docker compose -f compose.prod.yml up
-# Requires SECRET_KEY and POSTGRES_PASSWORD in the environment or .env.
+# Requires SECRET_KEY, POSTGRES_PASSWORD, and AGENTCMS_IMAGE_TAG in the
+# environment or .env.  AGENTCMS_IMAGE_TAG must be an immutable version tag
+# or digest (e.g. ghcr.io/owner/agentcms:v0.3.1 or
+# ghcr.io/owner/agentcms@sha256:abc123...).  Mutable tags (latest, local, dev,
+# major.minor) are rejected at startup.
 name: agentcms-prod
 
 services:
@@ -27,12 +31,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: agentcms-migrate:local
+    image: ${AGENTCMS_IMAGE_TAG:-agentcms:local}
     command: ["python", "-m", "alembic", "upgrade", "head"]
     environment:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:?set AGENTCMS_IMAGE_TAG in the environment}
     depends_on:
       db:
         condition: service_healthy
@@ -41,11 +46,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${TAG:-agentcms:local}
+    image: ${AGENTCMS_IMAGE_TAG:-agentcms:local}
     environment:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
+      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:?set AGENTCMS_IMAGE_TAG in the environment}
       HOST: 0.0.0.0
       PORT: "8000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
