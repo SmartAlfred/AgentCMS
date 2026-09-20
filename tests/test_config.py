@@ -194,3 +194,49 @@ def test_embed_token_scope_default() -> None:
     """EMBED_TOKEN_SCOPE defaults to posts:read."""
     settings = Settings(_env_file=None)
     assert settings.embed_token_scope == "posts:read"
+
+
+def test_production_refuses_missing_agentcms_image_tag() -> None:
+    """AGENTCMS_IMAGE_TAG is required in production."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            app_env="production",
+            secret_key="x" * 40,
+            database_url="postgresql+psycopg://u:p@db:5432/agentcms",
+            agentcms_image_tag="",
+        )
+    assert "AGENTCMS_IMAGE_TAG is required in production" in str(excinfo.value)
+
+
+def test_production_refuses_mutable_agentcms_image_tag() -> None:
+    """Mutable tags (latest, local, dev) are rejected in production."""
+    for mutable_tag in ["latest", "local", "dev", "ghcr.io/owner/agentcms:latest", "agentcms:local"]:
+        with pytest.raises(ValidationError) as excinfo:
+            Settings(
+                _env_file=None,
+                app_env="production",
+                secret_key="x" * 40,
+                database_url="postgresql+psycopg://u:p@db:5432/agentcms",
+                agentcms_image_tag=mutable_tag,
+            )
+        assert "AGENTCMS_IMAGE_TAG must be an immutable version tag or digest" in str(excinfo.value)
+
+
+def test_production_accepts_immutable_agentcms_image_tag() -> None:
+    """Immutable tags (semver, digest, major.minor) are accepted in production."""
+    for immutable_tag in [
+        "ghcr.io/owner/agentcms:v0.3.1",
+        "ghcr.io/owner/agentcms@sha256:abc123def456",
+        "ghcr.io/owner/agentcms:0.3.1",
+        "ghcr.io/owner/agentcms:v0.3",
+        "ghcr.io/owner/agentcms:v0.3.1-rc.1",
+    ]:
+        settings = Settings(
+            _env_file=None,
+            app_env="production",
+            secret_key="x" * 40,
+            database_url="postgresql+psycopg://u:p@db:5432/agentcms",
+            agentcms_image_tag=immutable_tag,
+        )
+        assert settings.agentcms_image_tag == immutable_tag

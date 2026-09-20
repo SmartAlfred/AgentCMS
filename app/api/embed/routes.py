@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -327,6 +327,46 @@ async def embed_config(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# GET /embed/v1/iframe — Iframe fallback for hosts blocking third-party scripts
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/iframe",
+    summary="Iframe fallback embed (for hosts blocking third-party scripts)",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+async def serve_embed_iframe(request: Request) -> HTMLResponse:
+    """Serve the iframe fallback embed page.
+
+    The iframe loads the embed script internally and renders posts.
+    Used when the host site blocks third-party scripts but allows iframes.
+
+    Query parameters:
+    - token: Capability token (cap_...) with posts:read scope
+    - limit: Max posts to show (default 10)
+    - theme: light, dark, or auto (default auto)
+    """
+    iframe_path = Path(__file__).parent / "agentcms_embed_iframe.html"
+
+    response = HTMLResponse(
+        content=iframe_path.read_text(encoding="utf-8"),
+        status_code=200,
+    )
+
+    # Caching: 1 hour, revalidate
+    response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+
+    # CORS for embedding origins (iframe needs to be allowed in frame-ancestors)
+    _apply_cors_headers(response, request)
+
+    return response
+
+
+# ---------------------------------------------------------------------------
 # OPTIONS handlers for CORS preflight
 # ---------------------------------------------------------------------------
 
@@ -340,6 +380,13 @@ async def embed_posts_options(request: Request) -> Response:
 
 @router.options("/config", include_in_schema=False)
 async def embed_config_options(request: Request) -> Response:
+    response = Response(status_code=204)
+    _apply_cors_preflight(response, request)
+    return response
+
+
+@router.options("/iframe", include_in_schema=False)
+async def embed_iframe_options(request: Request) -> Response:
     response = Response(status_code=204)
     _apply_cors_preflight(response, request)
     return response

@@ -520,3 +520,84 @@ def test_embed_script_x_content_type_options(client: TestClient, db: Session) ->
     _create_site(db)
     resp = client.get("/embed/v1/agentcms.js")
     assert resp.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_embed_iframe_endpoint_served(client: TestClient, db: Session) -> None:
+    """GET /embed/v1/iframe returns HTML fallback page."""
+    _create_site(db)
+    resp = client.get("/embed/v1/iframe")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "iframe-mount" in resp.text
+    assert "/embed/v1/agentcms.js" in resp.text
+
+
+def test_embed_iframe_requires_token_query_param(client: TestClient, db: Session) -> None:
+    """Iframe page expects token in query params (handled client-side)."""
+    _create_site(db)
+    resp = client.get("/embed/v1/iframe")
+    assert resp.status_code == 200
+    # The iframe HTML itself doesn't validate token server-side;
+    # validation happens when the embedded script fetches /embed/v1/posts
+
+
+def test_embed_iframe_cors_headers(client: TestClient, db: Session) -> None:
+    """Iframe endpoint respects EMBED_ORIGINS for CORS."""
+    settings = Settings(
+        app_env="test",
+        embed_origins=["https://allowed.example.com"],
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as test_client:
+        _create_site(db)
+
+        # Preflight
+        resp = test_client.options(
+            "/embed/v1/iframe",
+            headers={"Origin": "https://allowed.example.com", "Access-Control-Request-Method": "GET"},
+        )
+        assert resp.status_code == 204
+        assert resp.headers.get("access-control-allow-origin") == "https://allowed.example.com"
+
+        # Actual request
+        resp = test_client.get("/embed/v1/iframe", headers={"Origin": "https://allowed.example.com"})
+        assert resp.headers.get("access-control-allow-origin") == "https://allowed.example.com"
+
+
+def test_embed_iframe_cors_denied_origin(client: TestClient, db: Session) -> None:
+    """No CORS headers on iframe when origin not in EMBED_ORIGINS."""
+    settings = Settings(
+        app_env="test",
+        embed_origins=["https://allowed.example.com"],
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as test_client:
+        _create_site(db)
+
+        resp = test_client.get("/embed/v1/iframe", headers={"Origin": "https://evil.example.com"})
+        assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}
+
+
+def test_embed_iframe_no_cors_when_embed_origins_empty(client: TestClient, db: Session) -> None:
+    """No CORS headers on iframe when EMBED_ORIGINS is empty (default deny-all)."""
+    settings = Settings(
+        app_env="test",
+        embed_origins=[],
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as test_client:
+        _create_site(db)
+
+        resp = test_client.get("/embed/v1/iframe", headers={"Origin": "https://anything.example.com"})
+        assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}
+
+
+def test_embed_iframe_security_headers(client: TestClient, db: Session) -> None:
+    """Iframe endpoint has security headers."""
+    _create_site(db)
+    resp = client.get("/embed/v1/iframe")
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert resp.headers.get("x-frame-options") == "SAMEORIGIN"
