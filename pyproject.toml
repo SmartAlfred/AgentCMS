@@ -13,7 +13,7 @@ license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.30,<1",
-    "sqlalchemy>=2.0.30,<2.1",
+    "sqlalchemy>=2.0.30,<3",
     "psycopg[binary]>=3.1,<4",
     "alembic>=1.13,<2",
     "pydantic>=2.7,<3",
@@ -74,7 +74,10 @@ ignore = ["B008"]  # FastAPI Depends()/Query() in defaults is idiomatic
 
 [tool.mypy]
 python_version = "3.11"
-plugins = ["sqlalchemy.ext.mypy.plugin"]
+# No SQLAlchemy mypy plugin: SQLAlchemy 2.0 types the ORM inline, and the
+# sqlalchemy.ext.mypy.plugin shim it replaced was DELETED in 2.1 (#40). Declaring
+# it made the whole type gate depend on a module a routine dependency bump could
+# remove -- which is exactly how lint died at startup on 2026-09-25.
 files = ["app", "scripts"]
 disallow_untyped_defs = true
 warn_unused_ignores = true

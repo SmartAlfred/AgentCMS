@@ -198,6 +198,13 @@ Found 1 error in 1 file (errors prevented further checking)
 — before checking a single file. The gate was unpinnable, so it could be (and was)
 broken by a dependency release nobody chose.
 
+**Resolution (#41).** The plugin is gone from `[tool.mypy].plugins`: SQLAlchemy 2.0+
+types the ORM inline (`Mapped[...]`/`mapped_column()`), so the shim bought us nothing,
+and 2.1 deleted the module outright. `mypy` is green on **2.1.0** with no `# type:
+ignore` added, the `<2.1` cap from #40 is relaxed to `<3`, and `requirements.lock.txt`
+pins `sqlalchemy==2.1.0` — CI now tests the exact version that broke it. #40 pinned
+the closure; #41 removed the dependence on a module a bump can delete.
+
 The contract now:
 
 - `pyproject.toml` holds the **ranges** (with upper bounds on the critical deps);
@@ -206,10 +213,17 @@ The contract now:
   is missing from the lock or is pinned outside its specifier. CI's `lint` job runs
   it, and so does `make lint` / `make check-lock`.
 - Regenerate with `make lock` after editing `pyproject.toml`, and commit the lock in
-  the same change — the lock diff is the review of what CI will test.
-- `tests/test_dependency_contract.py` asserts the same two invariants inside the
-  pytest suite (the lock pins every component `pyproject.toml` declares, and every
-  declared mypy plugin imports), so a broken gate fails the `test` job too.
+  the same change — the lock diff is the review of what CI will test. To move **one**
+  pin without churning the rest (the monthly dependency bump), use
+  `pip-compile --extra dev --strip-extras --output-file requirements.lock.txt --upgrade-package <name> pyproject.toml`;
+  `make lock` re-resolves everything.
+- `tests/test_dependency_contract.py` asserts the invariants inside the pytest suite,
+  so a broken gate fails the `test` job too: the lock pins every component
+  `pyproject.toml` declares, every declared mypy plugin imports, no mypy plugin is
+  declared that a supported dependency release has deleted — and
+  `test_the_type_gate_actually_checks_files` points `mypy` at a canary file with a
+  deliberate type error and requires the error back. A config that merely *declares*
+  strictness is not evidence that anything was checked.
 
 ## Rules of thumb
 

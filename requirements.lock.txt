@@ -186,7 +186,7 @@ rpds-py==2026.6.3
     #   referencing
 ruff==0.16.9
     # via agentcms (pyproject.toml)
-sqlalchemy==2.0.54
+sqlalchemy==2.1.0
     # via
     #   agentcms (pyproject.toml)
     #   alembic
