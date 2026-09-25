@@ -1174,3 +1174,34 @@ class TestPresignedPutAgainstSelfHostedS3:
 
         assert sig(first) != sig(second)
         assert "host%3Aminio.internal" in second or "minio.internal" in second
+
+    def test_canonical_query_string_is_uri_encoded(self, monkeypatch) -> None:
+        """SigV4 signs a percent-encoded canonical query string.
+
+        Emitting a raw "/" in X-Amz-Credential (or ";" in X-Amz-SignedHeaders)
+        makes the service rebuild a different canonical request and answer 403
+        SignatureDoesNotMatch — the second half of the 2026-09-25 finding.
+        """
+        from app.services.media import generate_presigned_put_url
+
+        self._settings(monkeypatch, "http://127.0.0.1:59000")
+        url, _headers, _expires = generate_presigned_put_url("media/a/b.png", "image/png")
+        query = url.split("?", 1)[1]
+
+        assert "/" not in query, query
+        assert ";" not in query, query
+        assert "X-Amz-Credential=drillkey%2F" in query, query
+        assert "X-Amz-SignedHeaders=content-type%3Bhost" in query, query
+
+    def test_upload_bucket_is_selectable(self, monkeypatch) -> None:
+        """The nightly backup writes to its own bucket, not the media bucket."""
+        from urllib.parse import urlparse
+
+        from app.services.media import generate_presigned_put_url
+
+        self._settings(monkeypatch, "http://127.0.0.1:59000")
+        url, _headers, _expires = generate_presigned_put_url(
+            "20260925-120918.dump.enc", "application/octet-stream", bucket="agentcms-backups"
+        )
+
+        assert urlparse(url).path == "/agentcms-backups/20260925-120918.dump.enc", url

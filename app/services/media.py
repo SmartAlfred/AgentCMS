@@ -506,6 +506,7 @@ def generate_presigned_put_url(
     content_type: str,
     *,
     expires_in_minutes: int = PRESIGNED_URL_TTL_MINUTES,
+    bucket: str | None = None,
 ) -> tuple[str, dict[str, str], int]:
     """Generate a presigned S3 PUT URL using AWS Signature V4.
 
@@ -513,6 +514,7 @@ def generate_presigned_put_url(
     Falls back to a mock URL for development without real S3.
     """
     settings = get_settings()
+    bucket = bucket or settings.s3_bucket
 
     if not settings.s3_access_key_id or not settings.s3_secret_access_key:
         # Development mode: generate a mock presigned URL
@@ -521,7 +523,7 @@ def generate_presigned_put_url(
         nonce = hashlib.sha256(f"{storage_key}:{expires_at}".encode()).hexdigest()[:16]
         upload_url = (
             f"{settings.s3_endpoint_url or 'http://localhost:9000'}"
-            f"/{settings.s3_bucket}/{storage_key}"
+            f"/{bucket}/{storage_key}"
             f"?expires={expires_at}&nonce={nonce}"
         )
         upload_headers = {
@@ -545,29 +547,40 @@ def generate_presigned_put_url(
         if host_label == settings.s3_bucket:
             url = f"{endpoint}/{storage_key}"
         else:
-            url = f"{endpoint}/{settings.s3_bucket}/{storage_key}"
+            url = f"{endpoint}/{bucket}/{storage_key}"
     else:
-        url = f"https://{settings.s3_bucket}.s3.{region}.amazonaws.com/{storage_key}"
+        url = f"https://{bucket}.s3.{region}.amazonaws.com/{storage_key}"
 
-    # AWS Signature V4 for PUT
+    # AWS Signature V4 for PUT. `bucket` is the bucket the object lands in;
+    # callers that write outside the media bucket (the nightly backup) pass it
+    # explicitly, because a presigned URL for the wrong bucket is a 404/403.
+    parsed = urllib.parse.urlparse(url)
     now = datetime.now(UTC)
     date_stamp = now.strftime("%Y%m%d")
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
     credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
-
-    # Canonical request
-    parsed = urllib.parse.urlparse(url)
-    canonical_uri = parsed.path
-    canonical_querystring = "X-Amz-Algorithm=AWS4-HMAC-SHA256"
-    canonical_querystring += f"&X-Amz-Credential={settings.s3_access_key_id}%2F{credential_scope}"
-    canonical_querystring += f"&X-Amz-Date={amz_date}"
-    canonical_querystring += f"&X-Amz-Expires={expires_in}"
-    canonical_querystring += "&X-Amz-SignedHeaders=content-type%3Bhost"
-
-    payload_hash = "UNSIGNED-PAYLOAD"
-    host = parsed.netloc
-    canonical_headers = f"content-type:{content_type}\nhost:{host}\n"
     signed_headers = "content-type;host"
+    host = parsed.netloc
+    canonical_uri = parsed.path
+    canonical_headers = f"content-type:{content_type}\nhost:{host}\n"
+    payload_hash = "UNSIGNED-PAYLOAD"
+
+    # SigV4 signs a *URI-encoded* canonical query string: the "/" inside
+    # X-Amz-Credential and the ";" inside X-Amz-SignedHeaders must be percent
+    # encoded, exactly as they appear in the URL. Emitting them raw makes the
+    # service (MinIO and AWS alike) recompute a different canonical request and
+    # reject the PUT with 403 SignatureDoesNotMatch.
+    params = {
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": f"{settings.s3_access_key_id}/{credential_scope}",
+        "X-Amz-Date": amz_date,
+        "X-Amz-Expires": str(expires_in),
+        "X-Amz-SignedHeaders": signed_headers,
+    }
+    canonical_querystring = "&".join(
+        f"{urllib.parse.quote(k, safe='')}={urllib.parse.quote(v, safe='')}"
+        for k, v in sorted(params.items())
+    )
 
     canonical_request = (
         f"PUT\n{canonical_uri}\n{canonical_querystring}\n"
@@ -588,14 +601,7 @@ def generate_presigned_put_url(
     )
     signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
 
-    presigned_url = (
-        f"{url}?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-        f"&X-Amz-Credential={settings.s3_access_key_id}%2F{credential_scope}"
-        f"&X-Amz-Date={amz_date}"
-        f"&X-Amz-Expires={expires_in}"
-        f"&X-Amz-SignedHeaders=content-type%3Bhost"
-        f"&X-Amz-Signature={signature}"
-    )
+    presigned_url = f"{url}?{canonical_querystring}&X-Amz-Signature={signature}"
 
     upload_headers = {"Content-Type": content_type}
     return presigned_url, upload_headers, expires_in

@@ -160,11 +160,13 @@ def s3_upload(settings: Settings, file_path: Path) -> str:
     required for v1 (retention on S3 is delegated to bucket lifecycle rules —
     see docs/ops/runbook.md).
     """
-    _bucket, prefix = _s3_bucket_prefix(settings)
+    bucket, prefix = _s3_bucket_prefix(settings)
     key = f"{prefix.rstrip('/')}/{file_path.name}".strip("/") if prefix else file_path.name
     from app.services.media import generate_presigned_put_url
 
-    upload_url, upload_headers, _expires = generate_presigned_put_url(key, "application/octet-stream")
+    upload_url, upload_headers, _expires = generate_presigned_put_url(
+        key, "application/octet-stream", bucket=bucket
+    )
 
     import httpx
 
