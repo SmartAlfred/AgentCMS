@@ -86,6 +86,7 @@ class TestProductionGuard:
     def test_production_accepts_digest_tag(self) -> None:
         settings = Settings(
             app_env="production",
+            admin_token="a" * 32,
             secret_key="a" * 32,
             database_url="postgresql+psycopg://user:pass@localhost/db",
             debug=False,
@@ -96,6 +97,7 @@ class TestProductionGuard:
     def test_production_accepts_semver_tag(self) -> None:
         settings = Settings(
             app_env="production",
+            admin_token="a" * 32,
             secret_key="a" * 32,
             database_url="postgresql+psycopg://user:pass@localhost/db",
             debug=False,
