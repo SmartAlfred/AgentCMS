@@ -3,12 +3,54 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
+from collections.abc import Iterator
 
 import pytest
 from app.mcp.resources import get_all_resources, handle_resource_read
 from app.mcp.server import create_mcp_server
 from app.mcp.tools import get_all_tools, handle_tool_call
+from sqlalchemy.engine import make_url
+
+
+@pytest.fixture(autouse=True)
+def _suite_database(database_url: str) -> Iterator[None]:
+    """Bind every test in this file to the suite's database.
+
+    The MCP tools and resources below drive the app's global engine directly and ask for
+    no fixture of their own, so they used to inherit whatever binding the process
+    happened to hold: CI's dev default (``.../agentcms``, a database no test creates) and
+    then the backup/restore drill's binding to a database it had just dropped.  That is
+    run 36130902330 -- these three tests died with ``FATAL: database "agentcms" does not
+    exist`` while 802 others passed, because the surface they cover had no fixture and
+    rode on ambient state.
+    """
+    from app.config import reset_settings_cache
+    from app.db.session import dispose_engine
+
+    os.environ["DATABASE_URL"] = database_url
+    reset_settings_cache()
+    dispose_engine()
+    yield
+
+
+def test_these_tests_bind_the_suite_database_themselves() -> None:
+    """Regression guard, deliberately asking for no fixture (run 36130902330).
+
+    The autouse fixture above must already have pointed the app at the suite's database
+    before this body runs; a test that relies on the ambient default only passes when
+    some earlier file happened to leak a usable binding into the process.
+    """
+    from app.config import DEV_DATABASE_URL, get_settings
+
+    database = get_settings().database_url
+    assert database != DEV_DATABASE_URL, (
+        "the MCP tests are riding on the app's dev default instead of binding their own database"
+    )
+    assert make_url(database).database not in ("agentcms", None), (
+        f"the MCP tests are pointed at {make_url(database).database!r}, which no test creates"
+    )
 
 
 class TestMCPServerCreation:
