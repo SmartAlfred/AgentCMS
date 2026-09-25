@@ -1,0 +1,14 @@
+# Grafana datasource, uid pinned to the value docs/ops/grafana-dashboard.json
+# already references (${DS_PROMETHEUS}), so the committed dashboard renders
+# without a manual click.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: DS_PROMETHEUS
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

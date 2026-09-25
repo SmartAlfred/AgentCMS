@@ -46,3 +46,23 @@ groups:
         for: 5m
         labels: { severity: warning }
         annotations: { summary: "10+ rate-limit or quota rejections in 5 minutes" }
+      - alert: ReadyzNotOk
+        expr: (probe_success{job="agentcms-readiness"} == 0) OR (agentcms_readyz_status != 200)
+        for: 30s
+        labels: { severity: page }
+        annotations: { summary: "/readyz is not 200: a critical dependency (database/object store) is down" }
+      - alert: ContainerRestart
+        expr: changes(agentcms_container_restart_count{job="docker-exporter"}[10m]) > 0
+        for: 0s
+        labels: { severity: page }
+        annotations: { summary: "a stack container restarted (RestartCount increased) within the last 10 minutes" }
+      - alert: MigrateJobFailed
+        expr: agentcms_container_last_exit_code{job="docker-exporter",service="migrate"} != 0
+        for: 0s
+        labels: { severity: page }
+        annotations: { summary: "the one-shot migrate job exited non-zero: the schema is not at head" }
+      - alert: MetricsScrapeMissing
+        expr: (up{job="agentcms-api"} == 0) OR (absent(up{job="agentcms-api"}))
+        for: 0s
+        labels: { severity: page }
+        annotations: { summary: "no successful /metrics scrape (target down or gone) — dead-man switch" }

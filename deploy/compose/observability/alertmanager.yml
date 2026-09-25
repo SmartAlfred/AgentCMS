@@ -1,0 +1,20 @@
+# Alertmanager for the AgentCMS ops set (#47).
+# Everything goes to the sink, which records arrival timestamps and forwards the
+# message to a free ntfy topic — a channel a human actually watches.
+# send_resolved: true is deliberate: an absent "resolved" is how a real recovery
+# gets missed.
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: alert-sink
+  group_by: [alertname]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 3h
+
+receivers:
+  - name: alert-sink
+    webhook_configs:
+      - url: http://alert-sink:9119/alerts
+        send_resolved: true

@@ -50,6 +50,15 @@ class AlertState:
     auth_failures_5m: int = 0
     rate_limit_rejections_5m: int = 0
 
+    # Ops-surface signals (#47/#24 monitoring drill).  These come from the
+    # scrape path and from the docker exporter (container restart count /
+    # one-shot job exit code), never from a guess: an unset value means
+    # "healthy" and is what the drill deliberately breaks.
+    readyz_status: int = 200  # last observed GET /readyz status
+    container_restarts: int = 0  # agentcms_container_restart_count
+    migrate_exit_code: int = 0  # agentcms_container_last_exit_code{service="migrate"}
+    metrics_scraped: bool = True  # up{job="agentcms-api"} == 1
+
     @property
     def backup_missed(self) -> bool:
         # No success ever, or older than the 24h RPO.
@@ -128,6 +137,47 @@ ALERTS: dict[str, AlertRule] = {
         promql="increase(agentcms_rate_limit_rejections_total[5m]) >= 10",
         expr_for="5m",
         fires=lambda s: s.rate_limit_rejections_5m >= 10,
+    ),
+    # --- the three failure modes this stack has actually had (#47) -----------
+    # 1. /readyz != 200: the database disappeared under a running API
+    #    (2026-09-25 drill, item 1: 503 {"code":"database-unavailable"}).
+    "ReadyzNotOk": AlertRule(
+        name="ReadyzNotOk",
+        severity="page",
+        summary="/readyz is not 200: a critical dependency (database/object store) is down",
+        promql=('(probe_success{job="agentcms-readiness"} == 0) OR (agentcms_readyz_status != 200)'),
+        expr_for="30s",
+        fires=lambda s: s.readyz_status != 200,
+    ),
+    # 2. RestartCount > 0: a container died and Docker brought it back (the
+    #    crash-looping API of the 2026-09-25 desktop drill).
+    "ContainerRestart": AlertRule(
+        name="ContainerRestart",
+        severity="page",
+        summary="a stack container restarted (RestartCount increased) within the last 10 minutes",
+        promql='changes(agentcms_container_restart_count{job="docker-exporter"}[10m]) > 0',
+        expr_for="0s",
+        fires=lambda s: s.container_restarts > 0,
+    ),
+    # 3. The one-shot migrate job exiting non-zero: schema not at head while the
+    #    API keeps serving (the deploy gate that CI's alembic up/down covers).
+    "MigrateJobFailed": AlertRule(
+        name="MigrateJobFailed",
+        severity="page",
+        summary="the one-shot migrate job exited non-zero: the schema is not at head",
+        promql=('agentcms_container_last_exit_code{job="docker-exporter",service="migrate"} != 0'),
+        expr_for="0s",
+        fires=lambda s: s.migrate_exit_code != 0,
+    ),
+    # Dead-man: alerting that lives only on the monitored host cannot report the
+    # host's death, so "no successful scrape at all" is itself a page.
+    "MetricsScrapeMissing": AlertRule(
+        name="MetricsScrapeMissing",
+        severity="page",
+        summary="no successful /metrics scrape (target down or gone) — dead-man switch",
+        promql='(up{job="agentcms-api"} == 0) OR (absent(up{job="agentcms-api"}))',
+        expr_for="0s",
+        fires=lambda s: not s.metrics_scraped,
     ),
 }
 

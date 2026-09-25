@@ -154,3 +154,42 @@ class TestRuleFiring:
         metrics.backup_last_success_timestamp.set(0.0)
         fired = evaluate(get_settings(), db=db)
         assert "BackupMissed" in fired
+
+
+class TestOpsSurfaceRules:
+    """Failure modes this stack has actually had (#47).
+
+    Each new rule must fire on a snapshot of the broken state and clear when the
+    surface is healthy — the same predicate the ``/metrics`` scrape path uses, so
+    a rule that cannot fire is a test failure rather than a monitoring outage.
+    """
+
+    def test_readyz_not_ok_fires_on_503_and_clears_on_200(self) -> None:
+        from app.config import get_settings
+        from app.observability.alerts import AlertState, evaluate
+
+        assert "ReadyzNotOk" in evaluate(get_settings(), snapshot=AlertState(readyz_status=503))
+        assert "ReadyzNotOk" not in evaluate(get_settings(), snapshot=AlertState(readyz_status=200))
+
+    def test_container_restart_fires_when_restartcount_is_nonzero(self) -> None:
+        from app.config import get_settings
+        from app.observability.alerts import AlertState, evaluate
+
+        assert "ContainerRestart" in evaluate(get_settings(), snapshot=AlertState(container_restarts=1))
+        assert "ContainerRestart" not in evaluate(get_settings(), snapshot=AlertState(container_restarts=0))
+
+    def test_migrate_job_failed_fires_on_nonzero_exit(self) -> None:
+        from app.config import get_settings
+        from app.observability.alerts import AlertState, evaluate
+
+        assert "MigrateJobFailed" in evaluate(get_settings(), snapshot=AlertState(migrate_exit_code=1))
+        assert "MigrateJobFailed" not in evaluate(get_settings(), snapshot=AlertState(migrate_exit_code=0))
+
+    def test_metrics_scrape_missing_is_a_dead_man_switch(self) -> None:
+        from app.config import get_settings
+        from app.observability.alerts import AlertState, evaluate
+
+        assert "MetricsScrapeMissing" in evaluate(get_settings(), snapshot=AlertState(metrics_scraped=False))
+        assert "MetricsScrapeMissing" not in evaluate(
+            get_settings(), snapshot=AlertState(metrics_scraped=True)
+        )

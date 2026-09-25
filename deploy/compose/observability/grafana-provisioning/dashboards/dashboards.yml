@@ -1,0 +1,13 @@
+# Loads the committed dashboard (mounted at /etc/grafana/dashboards) so the ops
+# view is versioned with the app instead of living in Grafana's database.
+apiVersion: 1
+providers:
+  - name: agentcms
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

@@ -1,0 +1,128 @@
+# Self-hosted observability set for AgentCMS (#47): Prometheus + Alertmanager +
+# Grafana + blackbox-exporter + a container exporter + a webhook sink that pushes
+# alerts to a free ntfy topic.  Free official images only, digests pinned.
+#
+# Run it alongside the production stack so both share one network:
+#
+#   export AGENTCMS_NETWORK=agentcms-prod_default        # <project>_default
+#   docker compose -p agentcms-prod --env-file .env \
+#     -f deploy/compose/docker-compose.prod.yml \
+#     -f deploy/compose/docker-compose.observability.yml up -d
+#
+# Required env (see deploy/.env.example): METRICS_TOKEN (already required by the
+# prod stack), GRAFANA_ADMIN_PASSWORD.  Optional: AGENTCMS_NETWORK, NTFY_TOPIC,
+# NTFY_SERVER, EXPORT_PROJECT, *_PORT, SCRAPE_INTERVAL, EVALUATION_INTERVAL.
+#
+# Every listener binds to 127.0.0.1 by default: the ops set is not an internet
+# service.  Reach Grafana through an SSH tunnel or the Caddy reverse proxy.
+
+name: agentcms-observability
+
+networks:
+  default:
+    name: ${AGENTCMS_NETWORK:?AGENTCMS_NETWORK must name the app stack network, e.g. agentcms-prod_default}
+    external: true
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+  alert-sink-data:
+
+services:
+  # Scrapes /metrics (token-gated) and evaluates the committed rules that a test
+  # in tests/test_alerts.py keeps byte-identical to app/observability/alerts.py.
+  prometheus:
+    image: prom/prometheus@sha256:6559acbd5d770b15bb3c954629ce190ac3cbbdb2b7f1c30f0385c4e05104e218  # v3.1.0
+    entrypoint: ["/bin/sh", "/etc/prometheus/entrypoint.sh"]
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required (the /metrics endpoint is token-gated)}
+      SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-15s}
+      EVALUATION_INTERVAL: ${EVALUATION_INTERVAL:-15s}
+      RETENTION: ${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./observability/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh:ro
+      - ../../docs/ops/prometheus-rules.yml:/etc/prometheus/rules/agentcms.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  # Routes firing alerts to the sink (human channel) with resolved notifications.
+  alertmanager:
+    image: prom/alertmanager@sha256:d5155cfac40a6d9250ffc97c19db2c5e190c7bc57c6b67125c94903358f8c7d8  # v0.28.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    depends_on:
+      - alert-sink
+
+  # Receives Alertmanager's webhook, records arrival timestamps and forwards the
+  # message to ntfy.  Stdlib only, so the official python image is enough.
+  alert-sink:
+    image: python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9  # 3.12-slim
+    command: ["python", "-u", "/opt/agentcms/alert_sink.py"]
+    environment:
+      SINK_PORT: "9119"
+      SINK_DATA: /data
+      SINK_LABEL: ${SINK_LABEL:-agentcms}
+      NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+    volumes:
+      - ../../scripts/ops/alert_sink.py:/opt/agentcms/alert_sink.py:ro
+      - alert-sink-data:/data
+    ports:
+      - "127.0.0.1:${ALERT_SINK_PORT:-9119}:9119"
+
+  # /readyz and /healthz observed from outside the app process, so a wedged API
+  # still pages.  In-stack: this is an on-host probe, not an off-host one.
+  blackbox:
+    image: prom/blackbox-exporter@sha256:b04a9fef4fa086a02fc7fcd8dcdbc4b7b35cc30cdee860fdc6a19dd8b208d63e  # v0.25.0
+    command: ["--config.file=/etc/blackbox_exporter/blackbox.yml"]
+    volumes:
+      - ./observability/blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
+    ports:
+      - "127.0.0.1:${BLACKBOX_PORT:-9115}:9115"
+
+  # RestartCount (a crash-looping API) and one-shot exit codes (migrate): neither
+  # is exposed by cAdvisor, so read them from the Docker Engine API directly.
+  docker-exporter:
+    image: python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9  # 3.12-slim
+    command: ["python", "-u", "/opt/agentcms/docker_exporter.py"]
+    environment:
+      EXPORTER_PORT: "9121"
+      EXPORT_PROJECT: ${EXPORT_PROJECT:-}
+      DOCKER_SOCK: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../scripts/ops/docker_exporter.py:/opt/agentcms/docker_exporter.py:ro
+    ports:
+      - "127.0.0.1:${DOCKER_EXPORTER_PORT:-9121}:9121"
+
+  # The committed dashboard (docs/ops/grafana-dashboard.json) provisioned against
+  # the Prometheus datasource with the uid it already references.
+  grafana:
+    image: grafana/grafana@sha256:d8ea37798ccc41061a62ab080f2676dda6bf7815558499f901bdb0f533a456fb  # 11.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_INSTALL_PLUGINS: ""
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/agentcms-ops.json
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - ./observability/grafana-provisioning:/etc/grafana/provisioning:ro
+      - ../../docs/ops/grafana-dashboard.json:/etc/grafana/dashboards/agentcms-ops.json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus

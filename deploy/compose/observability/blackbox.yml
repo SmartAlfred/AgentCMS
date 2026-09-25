@@ -1,0 +1,10 @@
+# blackbox-exporter modules for the AgentCMS ops set (#47).
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      # /readyz answers 503 while degraded, so the probe must not treat a
+      # connection as the only signal — probe_success == 0 covers any non-2xx.
+      valid_status_codes: [200]

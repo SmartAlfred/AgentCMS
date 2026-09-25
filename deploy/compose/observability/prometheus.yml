@@ -1,0 +1,79 @@
+# Prometheus config for the AgentCMS ops set (#47).
+#
+# __METRICS_TOKEN__ is substituted at container start by prometheus-entrypoint.sh
+# into a runtime copy under /etc/prometheus/run/, so the scrape token never lands
+# in git and Prometheus refuses to start without it.
+global:
+  scrape_interval: __SCRAPE_INTERVAL__
+  evaluation_interval: __EVALUATION_INTERVAL__
+  external_labels:
+    stack: agentcms
+
+rule_files:
+  - /etc/prometheus/rules/agentcms.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # The app's own counters and gauges.  /metrics is token-gated (X-Metrics-Token,
+  # constant-time compare); `secrets` is sent but redacted from
+  # /api/v1/status/config so the token is not readable back out of Prometheus.
+  - job_name: agentcms-api
+    metrics_path: /metrics
+    http_headers:
+      X-Metrics-Token:
+        secrets: ["__METRICS_TOKEN__"]
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: api
+
+  # /readyz and /healthz probed by blackbox-exporter, i.e. observed from outside
+  # the app process: an API that answers nothing still pages.
+  - job_name: agentcms-readiness
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://api:8000/readyz"]
+        labels:
+          probe: readyz
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+  - job_name: agentcms-liveness
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://api:8000/healthz"]
+        labels:
+          probe: healthz
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # RestartCount / one-shot exit codes (see scripts/ops/docker_exporter.py).
+  - job_name: docker-exporter
+    static_configs:
+      - targets: ["docker-exporter:9121"]
+
+  # Prometheus and Alertmanager watch themselves: the observability stack dying
+  # must not be silent.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
