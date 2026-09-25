@@ -1,0 +1,151 @@
+# Release pipeline (#38).  A tag is the only thing that publishes an image, so
+# self-hosters have something stable to pin and we can answer "which build is
+# this?" from any running container.
+#
+#   git push origin v0.3.0           # or: gh release create v0.3.0 --notes-file ...
+#
+# Two rules, enforced below: the tag must equal `v` + pyproject's version (an
+# image that disagrees with the package metadata is worse than no image), and
+# the published image must boot — `verify-published` deploys the digest through
+# scripts/selfhost_e2e.sh, the same assertions CI runs on the source build.
+name: Release image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to (re)publish"
+        required: true
+
+permissions:
+  contents: write # append the digest to the release notes
+  packages: write # push to GHCR
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish:
+    name: build + publish to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      ref: ${{ steps.tag.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve the release tag
+        id: tag
+        run: |
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$ref" in
+            v[0-9]*) ;;
+            *) echo "not a v* release tag: $ref" >&2; exit 1 ;;
+          esac
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "releasing $ref" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The tag must match pyproject.toml
+        run: |
+          version="$(python3 -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          [ "v${version}" = "${{ steps.tag.outputs.ref }}" ] \
+            || { echo "tag ${{ steps.tag.outputs.ref }} != v${version} from pyproject.toml" >&2; exit 1; }
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (multi-arch)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          # Exactly what the self-host path builds (deploy/compose/*.yml uses this
+          # Dockerfile with the repository root as context), so the published
+          # image is the image CI just exercised.
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.ref }}
+          provenance: true
+          sbom: true
+
+      - name: Record the digest (job summary + release notes)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref="${{ steps.tag.outputs.ref }}"
+          digest="${{ steps.push.outputs.digest }}"
+          pinned="${IMAGE}@${digest}"
+          {
+            echo ""
+            echo "### Container image for ${ref}"
+            echo ""
+            echo '| | |'
+            echo '|---|---|'
+            echo "| tag | \`${IMAGE}:${ref}\` |"
+            echo "| digest | \`${digest}\` |"
+            echo "| pin this | \`AGENTCMS_IMAGE_TAG=${pinned}\` |"
+            echo ""
+            echo "Built from \`deploy/docker/Dockerfile\` (linux/amd64, linux/arm64), then booted"
+            echo "and exercised by the \`verify-published\` job in this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if ! gh release view "$ref" >/dev/null 2>&1; then
+            echo "no GitHub release for $ref yet — digest is in the job summary and tags only"
+            exit 0
+          fi
+          gh release view "$ref" --json body -q .body > /tmp/notes.md
+          if grep -q 'sha256:' /tmp/notes.md; then
+            echo "release notes already record a digest — leaving them alone"
+            exit 0
+          fi
+          {
+            echo ""
+            echo "## Container image"
+            echo ""
+            echo '```'
+            echo "${pinned}"
+            echo '```'
+            echo ""
+            echo "Also published as \`${IMAGE}:${ref}\` (multi-arch: linux/amd64, linux/arm64)."
+            echo "Pin the **digest**, not the tag: \`AGENTCMS_IMAGE_TAG=${pinned}\`."
+          } >> /tmp/notes.md
+          gh release edit "$ref" --notes-file /tmp/notes.md
+
+  verify-published:
+    name: boot the published image
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.publish.outputs.ref }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy the published digest and assert it serves content
+        env:
+          PINNED: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+        run: |
+          docker pull "$PINNED"
+          ./scripts/selfhost_e2e.sh --image-tag "$PINNED" --no-build --timeout 240
