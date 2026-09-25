@@ -342,3 +342,53 @@ def test_deploy_smoke_token_can_create_a_site() -> None:
     fails on the very first API call a self-hoster makes."""
     body = (REPO_ROOT / "scripts" / "deploy_smoke.sh").read_text()
     assert '"sites:write"' in body
+
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_selfhost_e2e_asserts_the_embed_surface_with_a_read_only_token() -> None:
+    """#37: /embed/v1/posts refuses write tokens, so the seed must issue a read-only one.
+
+    Every layer is asserted, because each one was missing: the seed minted only the
+    write token, and the smoke script then asked the embed feed for posts with it.
+    """
+    seed = (REPO / "scripts" / "seed.py").read_text()
+    assert "DEMO_EMBED_LINK_LABEL" in seed
+    assert 'embed_link.verbs = ["posts:read"]' in seed, "the embed link must be read-only"
+    assert "Embed token (read-only)" in seed, "a self-hoster must be able to find it"
+
+    e2e = (REPO / "scripts" / "selfhost_e2e.sh").read_text()
+    assert "SMOKE_EMBED_TOKEN" in e2e, "the E2E must hand the read-only token to the smoke script"
+
+    smoke = (REPO / "scripts" / "deploy_smoke.sh").read_text()
+    assert "token=${EMBED_TOKEN}" in smoke, "the embed feed must be read with the read-only token"
+    assert "token=${CAP_TOKEN}&limit=5" in smoke, "and the write token must be asserted as refused"
+
+
+def test_deploy_smoke_never_asserts_a_get_endpoint_with_head() -> None:
+    """#37: `curl -I` sends HEAD, FastAPI has no HEAD route, so the check read a 405 body."""
+    smoke = (REPO / "scripts" / "deploy_smoke.sh").read_text()
+    offenders = [ln.strip() for ln in smoke.splitlines() if re.search(r"(^|\s)-I(\s|$)", ln)]
+    assert not offenders, f"HEAD assertions read error bodies as verdicts: {offenders}"
+
+
+def test_caddyfile_only_uses_matchers_it_can_adapt() -> None:
+    """#37: the production Caddyfile could not adapt in any mode -- keep it boring.
+
+    Checked structurally over non-comment lines, so it runs without Docker (the
+    docker-gated `caddy validate` test covers actual adaptation).
+    """
+    raw = (REPO / "deploy" / "compose" / "Caddyfile").read_text().splitlines()
+    lines = [ln.strip() for ln in raw if ln.strip() and not ln.strip().startswith("#")]
+    body = "\n".join(lines)
+
+    assert "{$DOMAIN != " not in body, "no env-var comparison: Caddy cannot adapt that"
+    assert "{$DOMAIN:localhost}" in body, "the domain needs a default so a bare checkout adapts"
+    assert body.count("@embed_preflight") == 2, "the preflight matcher must be declared once"
+    assert "header Origin {$EMBED_ORIGINS}" not in body, "set a literal header, not a bare env var"
+
+    matchers = [ln for ln in lines if ln.startswith("@") and not ln.endswith("{")]
+    assert matchers, "expected named matchers in the production Caddyfile"
+    for ln in matchers:
+        assert len(ln.split()) > 1, f"matcher without a value: {ln}"

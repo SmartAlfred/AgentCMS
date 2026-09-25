@@ -64,7 +64,12 @@ def test_seed_is_idempotent_and_refreshes_the_demo_link(db: Session) -> None:
     second, _ = seed()
     after = _counts(db)
 
-    assert before == after == {"sites": 1, "actors": 1, "links": 1, "posts": 3}
+    # Idempotent: a re-run must not add rows.  Two links by design -- the write
+    # token for /c/{token} and the read-only token the embed surface accepts (#37).
+    assert before == after, "a re-run must not create rows"
+    assert before["sites"] == before["actors"] == 1
+    assert before["links"] == 2, "one write link and one read-only embed link"
+    assert db.scalar(select(CapabilityLink).where(CapabilityLink.label == "demo-embed-read-only")) is not None
     assert second != first, "a re-run should mint a fresh token"
     # The refreshed token works and the old one no longer resolves.
     verify_capability_token(db, second, required_verb="posts:write", required_site_slug="blog")
