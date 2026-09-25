@@ -40,6 +40,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
       AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:-}
+      # #44: this container boots the same production Settings as the API, so it
+      # needs the admin bootstrap secret too (Settings refuses to start without it).
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
