@@ -13,9 +13,12 @@ tested: the URLs a human types, and the registration order that decides them.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from app.main import create_app
 
 DASHBOARD_PAGES = (
     "/dashboard/",
@@ -47,14 +50,20 @@ def test_unauthenticated_pages_redirect_to_login(client: TestClient, path: str) 
     assert response.headers["location"] == "/dashboard/login"
 
 
-def test_dashboard_routes_are_registered_before_the_public_catch_alls(app: FastAPI) -> None:
-    """The root cause, asserted directly: registration order."""
+def test_dashboard_routes_are_registered_before_the_public_catch_alls() -> None:
+    """The root cause, asserted directly: call order in create_app.
 
-    paths = [getattr(route, "path", "") for route in app.routes]
-    dashboard = paths.index("/dashboard/login")
+    Starlette matches in registration order, so this is the invariant that
+    decides whether /dashboard/... is reachable. FastAPI 0.141 keeps included
+    routers unflattened, so the order is read from the wiring itself rather
+    than from ``app.routes``.
+    """
 
-    assert dashboard < paths.index("/{site_slug}/{slug}")
-    assert dashboard < paths.index("/{site_slug}")
+    source = inspect.getsource(create_app)
+    dashboard = source.index("register_dashboard_routes(app)")
+    public = source.index("register_public_routes(app)")
+
+    assert dashboard < public, "public catch-alls must be mounted after the dashboard"
 
 
 def test_public_catch_alls_still_work_behind_the_dashboard(client: TestClient) -> None:
