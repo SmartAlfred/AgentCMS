@@ -80,7 +80,7 @@ create_admin_token() {
   token=$(curl -fsS -X POST "${BASE_URL}/v1/admin/tokens" \
     -H "Content-Type: application/json" \
     -d '{"label":"upgrade-smoke","scopes":["posts:read","posts:write","posts:publish","assets:write"]}' \
-    | jq -r '.plaintext // empty')
+    | jq -r '.token // empty')
   if [[ -z "$token" || "$token" == "null" ]]; then
     log_error "Failed to create admin token"
     return 1
@@ -117,7 +117,7 @@ create_capability_link() {
     -H "Authorization: Bearer ${admin_token}" \
     -H "Content-Type: application/json" \
     -d "{\"label\":\"upgrade-smoke\",\"verbs\":[${verbs//,/\",\"}],\"ttl_minutes\":60}" \
-    | jq -r '.plaintext // empty')
+    | jq -r '.token // empty')
   if [[ -z "$token" || "$token" == "null" ]]; then
     log_error "Failed to create capability link"
     return 1

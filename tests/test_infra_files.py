@@ -89,8 +89,7 @@ def test_deploy_compose_validates_with_env_file() -> None:
     """Regression test for #35: the documented deploy/compose/docker-compose.prod.yml
     must parse when the repository-root .env is passed explicitly via --env-file.
     """
-    if _run(["docker", "info"]).returncode != 0:
-        pytest.skip("docker daemon not running")
+    skip_or_fail_without_docker("deploy compose validation")
 
     # Create a minimal .env with required production variables
     env = dict(
@@ -242,7 +241,7 @@ def test_release_workflow_publishes_a_pinnable_image() -> None:
         'tags: ["v*"]',
         "packages: write",
         "contents: write",
-        "ghcr.io/${{ github.repository }}",
+        "tr '[:upper:]' '[:lower:]'",  # GHCR rejects the repo's uppercase name (#37)
         "deploy/docker/Dockerfile",  # the image the self-host path builds
         "pyproject.toml",  # the tag must match the package version
         "platforms: linux/amd64,linux/arm64",
@@ -251,6 +250,12 @@ def test_release_workflow_publishes_a_pinnable_image() -> None:
         "selfhost_e2e.sh",  # the published digest is booted, not merely pushed
     ):
         assert needle in workflow, f"release.yml must reference {needle!r}"
+
+    # One lowercased image name everywhere: buildx aborted with
+    # `invalid tag "ghcr.io/SmartAlfred/AgentCMS:v0.3.0": repository name must be
+    # lowercase`, so the name is normalised once and the verify job reuses it.
+    assert "ghcr.io/${{ steps.norm.outputs.image }}:" in workflow
+    assert "env.IMAGE" not in workflow
 
 
 def test_documented_commands_actually_exist() -> None:
@@ -298,3 +303,23 @@ def test_documented_commands_actually_exist() -> None:
             if not (REPO_ROOT / script).exists():
                 problems.append(f"{rel}: `./{script}` does not exist")
     assert not problems, "documented commands that do not exist: " + "; ".join(sorted(set(problems)))
+
+
+def test_smoke_scripts_read_the_token_field_the_api_returns() -> None:
+    """The plaintext a token creation returns is exposed as ``token``.
+
+    ``TokenCreateResponse`` has no ``plaintext`` field, but both smoke scripts
+    parsed ``.plaintext`` -- so the documented verify path could never mint a token
+    and died with "Failed to create admin token: {.."token"..}" against a 201. The
+    self-host E2E job caught it on its first CI run (#37).
+    """
+    from app.api.v1.admin_tokens import TokenCreateResponse
+
+    fields = set(TokenCreateResponse.model_fields)
+    assert "token" in fields, f"TokenCreateResponse dropped `token`: {sorted(fields)}"
+    assert "plaintext" not in fields, sorted(fields)
+
+    for script in ("scripts/deploy_smoke.sh", "scripts/upgrade_smoke.sh"):
+        text = (REPO_ROOT / script).read_text()
+        assert "jq -r '.plaintext" not in text, f"{script} parses a field the API never returns"
+        assert "jq -r '.token // empty'" in text, f"{script} does not parse TokenCreateResponse.token"

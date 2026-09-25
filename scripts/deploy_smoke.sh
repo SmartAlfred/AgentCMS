@@ -99,7 +99,7 @@ ADMIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/admin/tokens" \
     -H "Content-Type: application/json" \
     -d '{"label":"smoke-test","scopes":["posts:read","posts:write","posts:publish","assets:write"]}')
 
-ADMIN_TOKEN=$(echo "${ADMIN_RESPONSE}" | jq -r '.plaintext // empty')
+ADMIN_TOKEN=$(echo "${ADMIN_RESPONSE}" | jq -r '.token // empty')
 if [[ -z "${ADMIN_TOKEN}" || "${ADMIN_TOKEN}" == "null" ]]; then
     log_error "Failed to create admin token: ${ADMIN_RESPONSE}"
     exit 1
@@ -133,7 +133,7 @@ CAP_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/sites/blog/capability-links" \
     -H "Content-Type: application/json" \
     -d '{"label":"smoke-embed","verbs":["posts:read","posts:write","posts:publish"],"ttl_minutes":60}')
 
-CAP_TOKEN=$(echo "${CAP_RESPONSE}" | jq -r '.plaintext // empty')
+CAP_TOKEN=$(echo "${CAP_RESPONSE}" | jq -r '.token // empty')
 if [[ -z "${CAP_TOKEN}" || "${CAP_TOKEN}" == "null" ]]; then
     log_error "Failed to create capability link: ${CAP_RESPONSE}"
     exit 1
@@ -227,7 +227,7 @@ WRITE_CAP_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/sites/blog/capability-links
     -H "Content-Type: application/json" \
     -d '{"label":"smoke-write","verbs":["posts:write"],"ttl_minutes":10}')
 
-WRITE_TOKEN=$(echo "${WRITE_CAP_RESPONSE}" | jq -r '.plaintext // empty')
+WRITE_TOKEN=$(echo "${WRITE_CAP_RESPONSE}" | jq -r '.token // empty')
 if [[ -n "${WRITE_TOKEN}" && "${WRITE_TOKEN}" != "null" ]]; then
     WRITE_EMBED_RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null \
         "${BASE_URL}/embed/v1/posts?token=${WRITE_TOKEN}&limit=5")

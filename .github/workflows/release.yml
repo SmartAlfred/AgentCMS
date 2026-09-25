@@ -23,9 +23,6 @@ permissions:
   contents: write # append the digest to the release notes
   packages: write # push to GHCR
 
-env:
-  IMAGE: ghcr.io/${{ github.repository }}
-
 jobs:
   publish:
     name: build + publish to GHCR
@@ -34,7 +31,12 @@ jobs:
     outputs:
       digest: ${{ steps.push.outputs.digest }}
       ref: ${{ steps.tag.outputs.ref }}
+      image: ${{ steps.norm.outputs.image }}
     steps:
+      - name: Normalise the image name (GHCR paths must be lowercase)
+        id: norm
+        run: echo "image=$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
@@ -76,7 +78,7 @@ jobs:
           file: deploy/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.ref }}
+          tags: ghcr.io/${{ steps.norm.outputs.image }}:${{ steps.tag.outputs.ref }}
           provenance: true
           sbom: true
 
@@ -85,6 +87,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          IMAGE="ghcr.io/${{ steps.norm.outputs.image }}"
           ref="${{ steps.tag.outputs.ref }}"
           digest="${{ steps.push.outputs.digest }}"
           pinned="${IMAGE}@${digest}"
@@ -145,7 +148,7 @@ jobs:
 
       - name: Deploy the published digest and assert it serves content
         env:
-          PINNED: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+          PINNED: ghcr.io/${{ needs.publish.outputs.image }}@${{ needs.publish.outputs.digest }}
         run: |
           docker pull "$PINNED"
           ./scripts/selfhost_e2e.sh --image-tag "$PINNED" --no-build --timeout 240
