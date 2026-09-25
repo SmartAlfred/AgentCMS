@@ -35,6 +35,7 @@ EMBED_SCRIPT_URL="${BASE_URL}/embed/v1/agentcms.js"
 MAX_WAIT="${MAX_WAIT:-180}"  # seconds
 SITE_SLUG="${SMOKE_SITE_SLUG:-blog}"
 CAP_TOKEN="${SMOKE_CAPABILITY_TOKEN:-}"
+EMBED_TOKEN="${SMOKE_EMBED_TOKEN:-}"   # read-only (posts:read) token; the embed surface refuses write tokens
 POLL_INTERVAL=3
 
 # Parse args
@@ -61,6 +62,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --capability-token)
             CAP_TOKEN="$2"
+            shift 2
+            ;;
+        --embed-token)
+            EMBED_TOKEN="$2"
             shift 2
             ;;
         *)
@@ -230,8 +235,24 @@ fi
 log_info "Embed script content verified"
 
 # ---- 10. Verify embed token-scoped fetch returns the post ----
-log_info "Verifying embed /posts endpoint with token..."
-EMBED_POSTS_URL="${BASE_URL}/embed/v1/posts?token=${CAP_TOKEN}&limit=10"
+# The embed surface only accepts read-only tokens, so a write-capable capability
+# token must be refused (403) -- assert that first, then read the feed with the
+# read-only token `make seed` prints.  Asserting with the write token is how the
+# first CI run of the self-host E2E job got a 403 dressed up as "no posts".
+log_info "Verifying the write-capable token is refused on the embed surface..."
+WRITE_EMBED_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/embed/v1/posts?token=${CAP_TOKEN}&limit=5")
+if [[ "${WRITE_EMBED_CODE}" != "403" ]]; then
+    log_error "Embed surface accepted a write token (got ${WRITE_EMBED_CODE}, expected 403)"
+    exit 1
+fi
+log_info "Write token refused on the embed surface (403)"
+
+if [[ -z "${EMBED_TOKEN}" ]]; then
+    log_error "No read-only embed token: set SMOKE_EMBED_TOKEN (make seed prints one)"
+    exit 1
+fi
+log_info "Verifying embed /posts endpoint with the read-only token..."
+EMBED_POSTS_URL="${BASE_URL}/embed/v1/posts?token=${EMBED_TOKEN}&limit=10"
 EMBED_RESPONSE=$(curl -s -H "Origin: http://localhost:3000" "${EMBED_POSTS_URL}")
 
 EMBED_POST_COUNT=$(echo "${EMBED_RESPONSE}" | jq '.posts | length')

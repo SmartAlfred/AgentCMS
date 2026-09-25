@@ -35,6 +35,7 @@ from sqlalchemy import select
 
 DEMO_ACTOR_LABEL = "Demo API Token"
 DEMO_LINK_LABEL = "Demo capability link"
+DEMO_EMBED_LINK_LABEL = "demo-embed-read-only"
 DEMO_POSTS: list[dict[str, str]] = [
     {
         "slug": "hello-world",
@@ -118,6 +119,31 @@ def seed() -> str:
         link.revoked_at = None
         link.expires_at = None
 
+        # --- embed capability link (read-only, #37) -------------------------------
+        # ``/embed/v1/posts`` refuses any token whose verbs include posts:write or
+        # posts:publish (app/api/embed/routes.py) and docs/deploy/embed.md tells
+        # self-hosters to use a "posts:read scope only" token -- so the seed has to
+        # issue one, or the documented embed path is unreachable without hand-written
+        # SQL.  The write token above keeps its scope for the /c/{token} agent flow.
+        embed_raw, embed_hash = generate_capability_token(slug)
+        embed_link = session.scalar(
+            select(CapabilityLink).where(
+                CapabilityLink.actor_id == actor.id,
+                CapabilityLink.label == DEMO_EMBED_LINK_LABEL,
+            )
+        )
+        if embed_link is None:
+            embed_link = CapabilityLink(id=uuid.uuid4(), actor_id=actor.id, label=DEMO_EMBED_LINK_LABEL)
+            session.add(embed_link)
+        embed_link.token_hash = embed_hash
+        embed_link.site_slug = slug
+        embed_link.path_scope = f"/v1/sites/{slug}/posts"
+        embed_link.verbs = ["posts:read"]
+        embed_link.uses_remaining = 1000
+        embed_link.uses_count = 0
+        embed_link.revoked_at = None
+        embed_link.expires_at = None
+
         # --- posts ----------------------------------------------------------------
         for data in DEMO_POSTS:
             if session.scalar(select(Post).where(Post.site_id == site.id, Post.slug == data["slug"])):
@@ -161,6 +187,7 @@ def main() -> None:
     print(f"Seed complete for {settings.app_name}.")
     print(f"  Demo site:         /v1/sites/{slug}")
     print(f"  Capability token:  {token}")
+    print(f"  Embed token (read-only): {embed_raw}  # for /embed/v1/posts?token=... (write tokens are rejected)")
     print(f"  Instruction sheet: GET  /c/{token}")
     print(f"  Write a draft:     POST /c/{token}/posts   (no Authorization header needed)")
     print(f"  Public blog:       GET  /{slug}  ·  /{slug}/rss.xml  ·  /llms.txt")

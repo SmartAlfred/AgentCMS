@@ -34,7 +34,10 @@ That's it. Your published posts now render inside `#cms`.
 
 ### 1. Create a Capability Link for Embedding
 
-The embed script needs a **read-only** capability token.
+The embed script needs a **read-only** capability token. `make seed` (i.e. `python -m scripts.seed`) prints one as
+`Embed token (read-only): cap_...`; the token it prints as `Capability token:`
+carries `posts:write`/`posts:publish` and is **rejected** by `/embed/v1/posts` (that
+is the point -- an embed token must not be able to write).
 
 **Today (until #44)**: neither the API nor the dashboard can mint a capability
 link yet -- the documented route `POST /v1/sites/{slug}/capability-links` does not

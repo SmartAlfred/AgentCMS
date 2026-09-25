@@ -204,6 +204,11 @@ cap_token="$(printf '%s\n' "$seed_out" | grep -oE 'cap_[A-Za-z0-9_]+' | head -1)
 [ -n "$site_slug" ] || die "could not read the seeded site slug from scripts/seed.py output"
 [ -n "$cap_token" ] || die "scripts/seed.py did not print a capability token (see #44)"
 
+embed_token="$(printf '%s\n' "$seed_out" | sed -n 's|.*Embed token (read-only): *\(cap_[A-Za-z0-9_]*\).*|\1|p' | head -1)"
+[ -n "$embed_token" ] || die "could not read the read-only embed token from scripts/seed.py output (the embed surface rejects write tokens)"
+# The embed surface takes a read-only token; export it so the smoke script uses it
+# for /embed/v1/posts and asserts a write token is refused.
+export SMOKE_EMBED_TOKEN="$embed_token"
 # --- 7. API roundtrip: capability link -> publish post -> public page ---------
 
 log "API roundtrip (minted capability link -> publish post -> public page)"
