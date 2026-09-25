@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     # Shared secret required on GET /metrics (admin-auth).  Empty = metrics
     # served to any authenticated admin token; never expose /metrics publicly.
     metrics_token: str = ""
+    # Reverse proxies whose ``X-Forwarded-For`` may be believed when deciding
+    # whether a request came from loopback (the ``/metrics`` and ``/v1/admin/*``
+    # exemptions).  Comma-separated CIDRs or bare addresses.  Empty (the default)
+    # = the header is never trusted, so a remote caller cannot claim to be
+    # 127.0.0.1 (#49).  Only ever set this for proxies you control: with the
+    # value empty, ``/metrics`` behind a proxy needs METRICS_TOKEN.
+    trusted_proxies: Annotated[list[str], NoDecode] = Field(default_factory=list)
     # Bootstrap secret for the whole /v1/admin/* surface (#44), sent as the
     # `X-Admin-Token` header.  [prod-required] In production the service
     # refuses to boot while it is unset or shorter than 32 characters: with no
@@ -146,9 +153,9 @@ class Settings(BaseSettings):
     # Empty = not set; in production this is required and must be immutable.
     agentcms_image_tag: str = ""
 
-    @field_validator("cors_origins", "embed_origins", mode="before")
+    @field_validator("cors_origins", "embed_origins", "trusted_proxies", mode="before")
     @classmethod
-    def _split_origins(cls, value: object) -> object:
+    def _split_csv_list(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

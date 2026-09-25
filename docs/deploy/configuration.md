@@ -27,6 +27,7 @@ start in production if misconfigured.
 | `S3_*` | Conditional | **Yes** | No | Object storage for media |
 | `BACKUP_*` | Conditional | **Yes** | No | Backup encryption & destination |
 | `METRICS_TOKEN` | No | **Yes** | `""` (empty) | Shared secret for `/metrics` |
+| `TRUSTED_PROXIES` | No | No | `""` (empty) | Proxies whose `X-Forwarded-For` may be believed for the loopback exemption |
 | `OTLP_ENDPOINT` | No | No | `""` (empty) | OTel collector endpoint |
 | `CAPABILITY_*` | No | No | Various | Link defaults & limits |
 | `DOMAIN` | No | No | `localhost` | Caddy domain for auto-TLS |
@@ -102,10 +103,34 @@ Used by media upload endpoints (`/v1/assets/*`). All optional — media endpoint
 | Variable | Description |
 |----------|-------------|
 | `METRICS_TOKEN` | **[secret]** Shared secret for `GET /metrics`. Empty = metrics still require admin auth but no extra token. Never expose `/metrics` publicly. |
+| `TRUSTED_PROXIES` | Comma-separated CIDRs or bare addresses of *your* reverse proxies. Empty (default) = `X-Forwarded-For` is never believed for the `/metrics` and `/v1/admin/*` loopback exemption, so a remote caller cannot claim to be `127.0.0.1`. Unparsable entries are ignored (fail closed to peer-only). **Behind a proxy, use `METRICS_TOKEN`** — see [Metrics behind a proxy](#metrics-behind-a-proxy). |
 | `OTLP_ENDPOINT` | OTLP/HTTP endpoint (e.g., `http://jaeger:4318`). Empty = tracing soft-disabled (no export, hot path stays cheap). |
 | `OTEL_SERVICE_NAME` | Service name in OTel `service.name` (default `agentcms`). |
 | `TRACE_SAMPLE_RATIO` | Sampling rate for normal requests (default `0.1` = 10%). Errors always sampled. |
 | `GIT_SHA` / `BUILD_TIME` | Baked-in build metadata for `/v1/version`. Empty = resolved from git/files at runtime. |
+
+### Metrics behind a proxy
+
+`GET /metrics` and the whole `/v1/admin/*` surface exempt a **local** caller from
+their credentials. "Local" is decided by the TCP peer address
+(`app/api/client_ip.py`), and `X-Forwarded-For` is **not** part of that decision
+unless you have listed the peer's network in `TRUSTED_PROXIES`. The header is
+client-supplied, so believing it unconditionally would let any remote caller send
+`X-Forwarded-For: 127.0.0.1` and walk straight through the gate (#49).
+
+| Deployment shape | What to do |
+|------------------|------------|
+| Scrape from the same host (`localhost:8000/metrics`) | Nothing. The peer is loopback. |
+| Scrape through Caddy (the shipped stack) | Nothing: scrape with `X-Metrics-Token` (Prometheus does this already), or scrape the API port directly. The `Caddyfile` replaces the header with `{remote}` in any case. |
+| Scrape through a load balancer you control | Set `METRICS_TOKEN` and send `X-Metrics-Token`. Prefer this over `TRUSTED_PROXIES`. |
+| The loopback exemption must work *through* your proxy | Set `TRUSTED_PROXIES` to the proxy's addresses (e.g. `TRUSTED_PROXIES=10.0.0.0/8`). Only the right-most hop that is not itself a trusted proxy counts, so a proxy that *appends* the address it saw still names the real caller. |
+
+Rules to keep in mind when you do set `TRUSTED_PROXIES`:
+
+* never put `0.0.0.0/0` or `::/0` in it — that reintroduces the bug for every caller;
+* a chain made only of trusted proxies proves nothing and stays gated;
+* a malformed entry is ignored rather than guessed, so the deployment fails closed
+  to peer-only (a typo can never *widen* the exemption).
 
 ### Backups & Restore Drill
 
@@ -196,7 +221,8 @@ Docker secrets, GitHub Actions secrets) and inject at deploy time. Do not commit
 - [ ] `CADDY_EMAIL` set for Let's Encrypt
 - [ ] `EMBED_ORIGINS` set to your embedding site origins (if using embed)
 - [ ] `BACKUP_STORE_URL` and `BACKUP_PASSPHRASE` set (if enabling backups)
-- [ ] `METRICS_TOKEN` set (if exposing metrics)
+- [ ] `METRICS_TOKEN` set (if exposing metrics, or if the app sits behind a proxy)
+- [ ] `TRUSTED_PROXIES` left empty unless a loopback scrape *must* work through your own proxy (never `0.0.0.0/0`)
 - [ ] `OTLP_ENDPOINT` set (if using tracing)
 - [ ] `S3_*` set (if using media uploads)
 

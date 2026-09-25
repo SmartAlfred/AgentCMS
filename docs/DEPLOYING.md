@@ -76,6 +76,7 @@ boot on the development defaults (`app/config.py`).
 | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `S3_REGION` | only if media is on | S3-compatible object store credentials (MinIO elsewhere) |
 | `S3_PUBLIC_BASE_URL` | only if media is on | Public base URL media URLs are built from — the ticket's "`PUBLIC_BASE_URL`"; there is **no** `PUBLIC_BASE_URL` setting, this is the variable |
 | `METRICS_TOKEN` | recommended | Shared secret for `GET /metrics` (empty = authenticated admin tokens + loopback only) |
+| `TRUSTED_PROXIES` | optional, default empty | Reverse proxies whose `X-Forwarded-For` may be believed for the `/metrics` + `/v1/admin/*` loopback exemption. Empty = the header is never trusted; behind a proxy, scrape with `METRICS_TOKEN` (see `docs/deploy/configuration.md`) |
 | `OTLP_ENDPOINT` | optional | OTel/HTTP trace export endpoint (empty = soft-disabled) |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` | Structured request logs |
 | `BACKUP_STORE_URL`, `BACKUP_PASSPHRASE`, `BACKUP_RETENTION_*` | backups enabled only | Nightly encrypted `pg_dump` (see `docs/ops/runbook.md`) |

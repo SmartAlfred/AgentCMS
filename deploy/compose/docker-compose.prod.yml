@@ -73,6 +73,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      # #49: empty = X-Forwarded-For is never believed for the /metrics and
+      # /v1/admin/* loopback exemption. Behind Caddy, scrape with
+      # METRICS_TOKEN (the Caddyfile replaces the header with {remote}).
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # #44: bootstrap secret for /v1/admin/*. Compose fails fast when it is
       # unset, matching the service's own production boot guard.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}

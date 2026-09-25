@@ -99,6 +99,10 @@ live reminder that the drill stack still needs the backup job wired in.
    that can reach the port can add `X-Forwarded-For: 127.0.0.1` and read
    `/metrics` without the token.  Low severity for a stack published on
    loopback only, but it should be tightened (see issue comment).
+   **Fixed in #49 (2026-09-26):** the exemption is decided by the TCP peer, and
+   the header is only read when that peer is a proxy listed in `TRUSTED_PROXIES`
+   (empty by default, so the shipped stack trusts nobody). See
+   `docs/deploy/configuration.md` § "Metrics behind a proxy".
 
 ## Uptime probe — what is proved and what is blocked
 

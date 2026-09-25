@@ -13,6 +13,7 @@ OPS cheat-sheet:
 | All status checks, 200-always | `curl -fsS localhost:8000/status` |
 | Version + migration head | `curl -fsS localhost:8000/v1/version` |
 | Metrics scrape | `curl -fsS -H 'X-Metrics-Token: $METRICS_TOKEN' localhost:8000/metrics` |
+| Metrics scrape refused (403) | You are not on loopback and sent no token — see "Metrics behind a proxy" below |
 | Alerts (PromQL, committed) | `docs/ops/prometheus-rules.yml` |
 | Grafana dashboard | Import `docs/ops/grafana-dashboard.json` |
 | Nightly backup | `make backup` (cron: `30 2 * * *` in the deploy host) |
@@ -93,6 +94,30 @@ or `DiskUsageHigh` (see `docs/ops/prometheus-rules.yml`).
 **Recovery:** address the root cause (restart the dispatcher for outbox
 backlog; free disk for `DiskUsageHigh`; scale workers for latency). Re-check
 `/readyz`, then the alert resolves after its `for:` window elapses.
+
+### Troubleshooting: `403 Metrics are admin-gated.`
+
+`/metrics` exempts a *local* caller from its credentials, and "local" is the TCP
+peer address only. `X-Forwarded-For` is client-supplied, so it is not believed
+unless you listed the peer's network in `TRUSTED_PROXIES` (#49) — a remote caller
+could otherwise claim `127.0.0.1` and scrape the instance with no secret at all.
+
+```bash
+# 1. Am I actually on the box? A same-host scrape needs no token:
+curl -fsS localhost:8000/metrics | head -3
+
+# 2. Scrape from anywhere else with the token (this is what Prometheus does):
+curl -fsS -H "X-Metrics-Token: $METRICS_TOKEN" https://cms.example.com/metrics | head -3
+
+# 3. A header is NOT a credential — this stays refused, and must:
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 127.0.0.1' \
+  https://cms.example.com/metrics          # 403
+```
+
+If a loopback scrape genuinely has to travel through *your* proxy, set
+`TRUSTED_PROXIES` to that proxy's addresses (never `0.0.0.0/0`); otherwise leave it
+empty and use `METRICS_TOKEN`. Full matrix: `docs/deploy/configuration.md`
+§ "Metrics behind a proxy".
 
 ---
 

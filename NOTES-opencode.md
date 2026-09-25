@@ -200,3 +200,149 @@ All deliverables from ticket #46 have been implemented and verified. The self-ho
 - app/observability/metrics.py (pre-existing, referenced by rules)
 - tests/test_ops_observability.py
 - tests/test_alerts.py
+---
+
+# Implementation Notes for Ticket #49: [P3/SECURITY] /metrics loopback exemption trusts a client-supplied X-Forwarded-For
+
+## Summary
+The `/metrics` loopback exemption no longer reads its client address from
+`X-Forwarded-For`. Both loopback exemptions in the codebase — `GET /metrics` and
+the whole `/v1/admin/*` surface — now ask one helper (`app/api/client_ip.py`), so
+they can no longer disagree. The header is consulted only when the TCP peer is a
+proxy the operator listed in the new `TRUSTED_PROXIES` setting, which is empty by
+default: the conservative behaviour `require_admin` has had since #44.
+
+Reproduced first, then fixed. On the unmodified tree, a production-configured app
+behind a `TestClient` whose peer is `203.0.113.7`:
+
+```
+GET /metrics  X-Forwarded-For: 127.0.0.1   ->  200 OK, full metrics body
+GET /metrics  (no header)                   ->  403 Metrics are admin-gated.
+```
+
+After the fix the first line is `403`, and a `TestClient` peer of `127.0.0.1` still
+scrapes with no credentials.
+
+## Changes Made
+
+### 1. `app/api/client_ip.py` (new) — the single answer to "is this caller local?"
+- `parse_address()` — tolerant address parsing (zone ids stripped, a hostname or
+  garbage is never an address).
+- `is_loopback_address()` — `127.0.0.0/8`, `::1` **and** the IPv4-mapped spelling
+  `::ffff:127.0.0.1` (the old `/metrics` check missed the mapped form; the admin
+  one handled it — the merged helper keeps the stricter of the two).
+- `parse_trusted_proxies()` — parses `TRUSTED_PROXIES` into networks, `lru_cache`d;
+  an unparsable entry is dropped rather than guessed, so a typo fails closed to
+  peer-only.
+- `effective_client_address()` — the rule: the peer decides, unless the peer is a
+  trusted proxy, in which case the client is the **right-most** `X-Forwarded-For`
+  hop that is not itself a trusted proxy. `None` when the chain names no client
+  (every hop trusted) or there is no peer.
+- `client_is_loopback()` — `effective_client_address()` + `is_loopback_address()`.
+
+### 2. `app/api/observability.py`
+- `_client_ip()` (first XFF value) and `_is_loopback()` (the 127.0.0.0/8 + ::1/128
+  membership test) are gone; `_metrics_authorized()` now calls
+  `client_is_loopback(request, settings.trusted_proxies)`.
+- The credential order is unchanged: test env → local → `X-Metrics-Token` → API
+  bearer with `*:read`.
+- Module docstring states the rule and that a proxied `/metrics` needs
+  `METRICS_TOKEN`.
+
+### 3. `app/api/admin_auth.py`
+- `_peer_is_loopback()` replaced by `_client_is_local(request, settings)`, which
+  delegates to the same helper, so the two surfaces agree by construction.
+- The module docstring no longer claims `/metrics` trusts XFF (it is the paragraph
+  the ticket quotes); it now describes the shared rule.
+
+### 4. `app/config.py`
+- New `trusted_proxies: list[str]` (comma-separated CIDRs/addresses, `NoDecode` +
+  the existing CSV validator, renamed `_split_origins` → `_split_csv_list`).
+  Default `[]`.
+
+### 5. Wiring, docs, changelog
+- `compose.prod.yml`, `deploy/compose/docker-compose.prod.yml`: `TRUSTED_PROXIES:
+  ${TRUSTED_PROXIES:-}` on the `api` service (opt-in, empty default).
+- `.env.example`, `deploy/.env.example`: documented, including "behind a proxy,
+  scrape with METRICS_TOKEN".
+- `docs/deploy/configuration.md`: quick-reference + detail rows, a new
+  "Metrics behind a proxy" section (deployment-shape matrix, the three rules for
+  anyone who does set it), and the production checklist.
+- `docs/DEPLOYING.md`: env table row.
+- `docs/ops/runbook.md`: cheat-sheet row + a "403 Metrics are admin-gated."
+  troubleshooting block with the copy-pasteable checks.
+- `deploy/vm/quickstart.md` — the monitoring example sent `METRICS_TOKEN` as
+  `Authorization: Bearer`, which `/metrics` never accepted; it now sends
+  `X-Metrics-Token` (pre-existing doc bug, in the ticket's blast radius).
+- `deploy/fly/quickstart.md`, `deploy/render/quickstart.md`: the token is required
+  behind their proxies, with the reason.
+- `docs/ops/drills/2026-09-25-alert-delivery.md`: finding 3 marked fixed in #49.
+- `CHANGELOG.md`: Unreleased → Security.
+
+## Design Decision: CIDRs rather than a hop count
+The ticket allows either "the peer is in a configured trusted-proxy range" or "the
+header count matches the number of trusted hops". Ranges were chosen because they
+are strictly more expressive and they cover the shape the ticket calls out — a
+proxy that **appends** the address it saw. With a hop count, an appending proxy
+produces a count that grows with attacker input; with ranges, the right-most
+non-trusted hop is the real caller no matter how many hops were prepended
+(`X-Forwarded-For: 127.0.0.1, 203.0.113.7` from a trusted peer is refused —
+`test_a_proxy_that_appends_cannot_be_spoofed_through`).
+
+Both surfaces get the same treatment, which widens `/v1/admin/*` by exactly one
+opt-in: if an operator declares a proxy, a *local* caller arriving through that
+proxy is exempt on both surfaces (mirrors the pre-existing "loopback peer" rule).
+Anything remote stays gated.
+
+## Acceptance Criteria Verification
+
+| Criterion | Status | Notes |
+|-----------|--------|-------|
+| `X-Forwarded-For` ignored for the loopback decision unless the peer is a configured trusted proxy | ✅ | `app/api/client_ip.py`; `TestClientIpHelper` (4 tests), `TestTrustedProxies` (5 tests) |
+| A spoofed `X-Forwarded-For: 127.0.0.1` from a non-loopback `TestClient` peer does **not** grant the exemption | ✅ | `test_forwarded_for_from_a_remote_peer_is_refused` — watched fail first (`assert 200 == 403`, full metrics body in the failure output) |
+| The two surfaces agree | ✅ | both call `client_is_loopback`; `TestAdminSurfaceAgrees` (4 tests) |
+| Appending proxies are handled | ✅ | `test_a_proxy_that_appends_cannot_be_spoofed_through` (and the admin-surface twin) |
+| Fail closed on a chain of only trusted hops / an unparsable entry | ✅ | `test_a_whole_chain_of_trusted_hops_is_not_exempt`, `test_unparsable_entries_are_dropped_rather_than_guessed` |
+| Document that `/metrics` behind a proxy needs `METRICS_TOKEN` | ✅ | configuration.md § "Metrics behind a proxy", runbook troubleshooting, `.env.example` × 2, quickstarts, CHANGELOG |
+| The shipped stack keeps the conservative default | ✅ | `TestShippedStack` (Caddyfile replaces XFF with `{remote}`; both prod compose files pass the setting through empty) |
+
+## Testing
+- New: `tests/test_metrics_proxy_trust.py` (35 tests) — behavioural first (real app,
+  production settings, chosen peer per test), then the helper, the parser, the
+  setting and the shipped stack.
+- Full suite: 960 passed, 6 skipped (the skips are the pre-existing Docker/CI-only ones).
+- `ruff format`, `ruff check`, `ruff format --check`, `mypy` all clean.
+
+## Not Done (Deliberately, Stated Plainly)
+- **`app/middleware.py` still reads `X-Forwarded-For` unconditionally** for the
+  `ip` field in request logs and for the read-path IP rate-limit key
+  (`_client_ip` / `_get_client_ip`). That is a different question from this
+  ticket's (spoofing the *rate-limit key* is an evasion, not an auth bypass), it
+  touches two more call sites with their own tests, and changing the rate-limit
+  key would alter behaviour for every proxied deployment. It should be its own
+  ticket against the same helper; nothing in this change makes it worse.
+- **The live-stack evidence was not re-run.** The ticket's production
+  verification (WS3 D6 drill) needs Docker plus a domain; the tests here pin the
+  same behaviour from the code and the committed Caddyfile instead. The
+  pass-through-proxy case (a proxy that forwards XFF unchanged *and* an operator
+  who has set `TRUSTED_PROXIES`) is documented as the reason to use
+  `METRICS_TOKEN` instead, not defended against beyond "only your own addresses".
+
+## Files Modified / Added for Ticket #49
+- app/api/client_ip.py (new)
+- app/api/observability.py
+- app/api/admin_auth.py
+- app/config.py
+- compose.prod.yml
+- deploy/compose/docker-compose.prod.yml
+- .env.example
+- deploy/.env.example
+- docs/deploy/configuration.md
+- docs/DEPLOYING.md
+- docs/ops/runbook.md
+- docs/ops/drills/2026-09-25-alert-delivery.md
+- deploy/vm/quickstart.md
+- deploy/fly/quickstart.md
+- deploy/render/quickstart.md
+- CHANGELOG.md
+- tests/test_metrics_proxy_trust.py (new)

@@ -74,7 +74,7 @@ In the web service **Environment** tab, add:
 | `LOG_LEVEL` | `INFO` |
 | `LOG_FORMAT` | `json` |
 | `EMBED_ORIGINS` | `https://your-frontend.com` (your embedding site origin) |
-| `METRICS_TOKEN` | Random string for `/metrics` auth |
+| `METRICS_TOKEN` | Random string for `/metrics` auth — **required behind Render's proxy** (the app only exempts a loopback peer; it never trusts a forwarded `X-Forwarded-For`) |
 | `OTLP_ENDPOINT` | Your OTLP collector (e.g., `https://api.honeycomb.io:443`) |
 
 ### Optional (Media Storage)

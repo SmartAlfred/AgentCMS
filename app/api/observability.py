@@ -7,6 +7,13 @@
 * a loopback connection (localhost scraping), or
 * test environments (so the test suite can scrape without secrets).
 
+The loopback exemption is decided by :func:`app.api.client_ip.client_is_loopback`,
+the same helper ``require_admin`` uses: ``X-Forwarded-For`` is client-supplied and
+is ignored unless the peer is a proxy listed in ``TRUSTED_PROXIES`` (#49).  Behind
+a reverse proxy, set ``METRICS_TOKEN`` (what the shipped Prometheus config and the
+Caddyfile's ``header_up X-Forwarded-For {remote}`` are built for) -- do not widen
+``TRUSTED_PROXIES`` to make a header work.
+
 DB-backed gauges (outbox backlog, webhook success ratio, review queue,
 pool saturation) are refreshed on every scrape so the numbers are always
 current and the alert rules can fire from live state.
@@ -15,12 +22,12 @@ current and the alert rules can fire from live state.
 from __future__ import annotations
 
 import hmac
-import ipaddress
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from app.api.client_ip import client_is_loopback
 from app.db.session import get_db
 from app.observability.metrics import (
     metrics_content_type,
@@ -29,28 +36,6 @@ from app.observability.metrics import (
 )
 
 router = APIRouter(tags=["ops"])
-
-_LOOPBACK_NETS = (ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128"))
-
-
-def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        for part in forwarded.split(","):
-            part = part.strip()
-            if part:
-                return part
-    return request.client.host if request.client else None
-
-
-def _is_loopback(ip_value: str | None) -> bool:
-    if not ip_value:
-        return False
-    try:
-        addr = ipaddress.ip_address(ip_value.split("%")[0])
-    except ValueError:
-        return False
-    return any(addr in net for net in _LOOPBACK_NETS)
 
 
 def _metrics_authorized(request: Request, db: Session) -> bool:
@@ -62,8 +47,10 @@ def _metrics_authorized(request: Request, db: Session) -> bool:
     if settings.is_test:
         return True
 
-    # Loopback scraping (prometheus / node_exporter on the same host).
-    if _is_loopback(_client_ip(request)):
+    # Loopback scraping (prometheus / node_exporter on the same host).  The peer
+    # address decides this; `X-Forwarded-For` only counts behind a proxy the
+    # operator has declared in TRUSTED_PROXIES (#49).
+    if client_is_loopback(request, settings.trusted_proxies):
         return True
 
     # Shared metric token (constant-time compare, no early exit).

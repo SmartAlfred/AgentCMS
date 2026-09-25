@@ -63,6 +63,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      # #49: empty = X-Forwarded-For is never believed, so a remote caller
+      # cannot claim 127.0.0.1 to scrape /metrics. Leave it empty unless a
+      # proxy you control is the only path to the loopback exemption.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # #44: bootstrap secret for /v1/admin/*. Compose fails fast when it is
       # unset, matching the service's own production boot guard.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}

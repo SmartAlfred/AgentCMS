@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- `GET /metrics` no longer takes its loopback exemption from a client-supplied
+  `X-Forwarded-For` header. `app/api/client_ip.py` is now the single place both
+  `GET /metrics` and `/v1/admin/*` ask "is this caller local?": the TCP peer
+  decides, and the header is only read when the peer is a proxy listed in the new
+  `TRUSTED_PROXIES` setting (empty by default, so nothing changes unless an
+  operator opts in). The right-most hop that is not itself a trusted proxy wins,
+  so a proxy that appends rather than replaces the header still names the real
+  caller. Documented in `docs/deploy/configuration.md` § "Metrics behind a
+  proxy": behind a proxy, scrape with `METRICS_TOKEN` (#49).
+
 ## [0.3.1] - 2026-09-25
 
 ### Fixed

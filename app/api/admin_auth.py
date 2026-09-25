@@ -22,10 +22,13 @@ Accepted credentials, in order:
    enough -- that is the hole this guard closes.
 4. A loopback peer, or ``APP_ENV=test`` (mirrors ``GET /metrics``).
 
-``X-Forwarded-For`` is deliberately **not** trusted here, unlike ``/metrics``:
-it is client-supplied, so honouring it would let any remote caller send
-``X-Forwarded-For: 127.0.0.1`` and walk straight through the guard.  Only the
-literal peer address counts.
+``X-Forwarded-For`` is **not** trusted on its own here (and neither is it on
+``/metrics`` any more, #49): it is client-supplied, so honouring it would let any
+remote caller send ``X-Forwarded-For: 127.0.0.1`` and walk straight through the
+guard.  Both surfaces now resolve the caller through
+:func:`app.api.client_ip.client_is_loopback`, which falls back to the literal
+peer address and only consults the header when the peer is a proxy the operator
+listed in ``TRUSTED_PROXIES``.
 
 Usage::
 
@@ -35,14 +38,14 @@ Usage::
 from __future__ import annotations
 
 import hmac
-import ipaddress
 from dataclasses import dataclass
 
 from fastapi import Depends, Header, Request
 from sqlalchemy.orm import Session
 
+from app.api.client_ip import client_is_loopback
 from app.auth import AuthContext, require_auth
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.dashboard.auth import (
     CSRF_COOKIE,
     CSRF_TOKEN_HEADER,
@@ -95,25 +98,14 @@ class AdminContext:
     actor_id: str | None = None
 
 
-def _peer_is_loopback(request: Request) -> bool:
-    """True only when the *literal* peer address is a loopback address.
+def _client_is_local(request: Request, settings: Settings) -> bool:
+    """True only for a caller that really is on this machine (#49).
 
-    ``request.client`` is the TCP peer.  A name (``testclient``), a hostname or
-    a missing client is never treated as loopback, and ``X-Forwarded-For`` is
-    ignored on purpose -- it is attacker-controlled.
+    Delegates to the shared helper so this surface and ``GET /metrics`` cannot
+    disagree about what "local" means: the literal peer address decides it, and
+    ``X-Forwarded-For`` counts only behind a proxy listed in ``TRUSTED_PROXIES``.
     """
-    client = request.client
-    host = getattr(client, "host", None)
-    if not host:
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    if address.is_loopback:
-        return True
-    mapped = getattr(address, "ipv4_mapped", None)
-    return bool(mapped is not None and mapped.is_loopback)
+    return client_is_loopback(request, settings.trusted_proxies)
 
 
 def _admin_token_matches(supplied: str | None, expected: str) -> bool:
@@ -152,7 +144,7 @@ async def require_admin(
     if settings.is_test:
         return AdminContext(source="test")
 
-    if _peer_is_loopback(request):
+    if _client_is_local(request, settings):
         return AdminContext(source="loopback")
 
     if _admin_token_matches(x_admin_token, settings.admin_token):

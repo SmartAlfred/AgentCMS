@@ -62,6 +62,8 @@ fly secrets set DATABASE_URL="postgresql+psycopg://agentcms:your-db-password@age
 fly secrets set EMBED_ORIGINS="https://your-frontend.com" --app agentcms-api
 
 # Optional: observability
+# METRICS_TOKEN is required to scrape /metrics here: behind Fly's proxy the app
+# sees a non-loopback peer, and it never trusts a forwarded X-Forwarded-For.
 fly secrets set METRICS_TOKEN="your-metrics-token" --app agentcms-api
 fly secrets set OTLP_ENDPOINT="https://your-otlp-endpoint" --app agentcms-api
 

@@ -314,7 +314,7 @@ sudo ufw enable
 
 - **Health**: `curl https://cms.example.com/healthz`
 - **Readiness**: `curl https://cms.example.com/readyz`
-- **Metrics**: `curl -H "Authorization: Bearer $METRICS_TOKEN" https://cms.example.com/metrics`
+- **Metrics**: `curl -H "X-Metrics-Token: $METRICS_TOKEN" https://cms.example.com/metrics` — behind Caddy the app is *not* loopback, so the token is what opens `/metrics` (the app never trusts a forwarded `X-Forwarded-For`; see [configuration.md](../configuration.md#metrics-behind-a-proxy))
 - **Status page**: `https://cms.example.com/status`
 
 ## Next Steps
