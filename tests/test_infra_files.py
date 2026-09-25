@@ -612,3 +612,81 @@ def test_drill_reaps_the_servers_a_killed_run_left_behind(tmp_path: Path) -> Non
     assert _reap_orphan_servers(root=root) == ["agentcms-drill-pgdata-stale"]
     assert not stale.exists(), "a stale drill server must be stopped and deleted"
     assert fresh.exists(), "a concurrent test's server must never be touched"
+
+
+def test_selfhost_e2e_reads_base64url_capability_tokens_whole() -> None:
+    """#37/#44: capability tokens are base64url, so ``-`` and ``_`` are legal characters.
+
+    ``scripts/selfhost_e2e.sh`` used to read the seeded token with ``cap_[A-Za-z0-9_]+``;
+    the random half of ``cap_blog_tKy9A-b_CdEf...`` then matched as ``cap_blog_tKy``.  The
+    API answered ``401 Unknown capability token`` and the deploy job blamed the product
+    (1-in-N runs passed, so it read as flakiness).  This runs the script's **own** patterns
+    over the exact lines ``scripts/seed.py`` prints, so narrowing them again fails here
+    instead of in the self-host deploy job.
+    """
+    script = (REPO_ROOT / "scripts" / "selfhost_e2e.sh").read_text()
+    seed_src = (REPO_ROOT / "scripts" / "seed.py").read_text()
+
+    write_match = re.search(r"grep -oE '(cap_[^']+)'", script)
+    assert write_match, "the script must read the write token with `grep -oE 'cap_...'`"
+
+    # The read-only token is captured by a `sed` group, so read the group out of the script.
+    sed_line = next((line for line in script.splitlines() if "Embed token (read-only)" in line), "")
+    assert "sed -n" in sed_line, "the script must read the read-only embed token with a `sed` capture"
+    captured = sed_line.split("\\(", 1)[1].split("\\)", 1)[0]
+    assert captured.startswith("cap_"), captured
+
+    assert r"tr -d '\r'" in script, "`compose exec` output is CRLF: the token must lose the CR"
+
+    # The labels are the only thing the sed capture can key on -- and they come from seed.py.
+    assert '"  Capability token:  {token}"' in seed_src
+    assert '"  Embed token (read-only): {embed_token}"' in seed_src
+
+    write_token = "cap_blog_tKy9A-b_CdEf-GhIjKlMnOpQr"
+    embed_token = "cap_blog_9x_Yz-12_AbCdEfGhIjKlMn"
+    seed_stdout = (
+        "Seed complete for AgentCMS.\r\n"
+        f"  Capability token:  {write_token}\r\n"
+        f"  Embed token (read-only): {embed_token}\r\n"
+        "  Instruction sheet: GET  /c/" + write_token + "\r\n"
+    )
+
+    def extract(command: str, pattern: str) -> str:
+        """Run one extraction pipeline from the script, under the script's own shell flags."""
+        completed = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail; {command}", "--", pattern],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "SEED_OUT": seed_stdout},
+        )
+        assert completed.returncode == 0, completed.stderr
+        return completed.stdout.strip()
+
+    written = extract(
+        r"""printf '%s\n' "$SEED_OUT" | tr -d '\r' | grep -oE "$1" | head -1""",
+        write_match.group(1),
+    )
+    assert written == write_token, f"the write token was truncated: got {written!r}"
+
+    embedded = extract(
+        r"""printf '%s\n' "$SEED_OUT" | tr -d '\r'"""
+        r""" | sed -n "s|.*Embed token (read-only): *\($1\).*|\1|p" | head -1""",
+        captured,
+    )
+    assert embedded == embed_token, f"the read-only token was truncated: got {embedded!r}"
+    assert embedded != written, "the embed surface must never get the write token"
+
+
+def test_the_capability_token_alphabet_is_base64url() -> None:
+    """The fixture above is only meaningful if the service really mints ``-`` and ``_``.
+
+    Asserting it here means the guard cannot quietly become a test of a token shape
+    nothing produces (``cap_<site_slug>_<secrets.token_urlsafe>``, #28).
+    """
+    from app.services.capability_tokens import generate_capability_token
+
+    token, _ = generate_capability_token("blog")
+    assert re.fullmatch(r"cap_blog_[A-Za-z0-9_-]+", token), token
+    alphabet = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+    assert set(token) <= alphabet | {"c", "a", "p", "_", "b", "l", "o", "g"}
