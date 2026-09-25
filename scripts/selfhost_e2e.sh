@@ -212,6 +212,13 @@ export SMOKE_EMBED_TOKEN="$embed_token"
 # --- 7. API roundtrip: capability link -> publish post -> public page ---------
 
 log "API roundtrip (minted capability link -> publish post -> public page)"
+# deploy_smoke.sh asserts CORS in both directions, so hand it the allowlist this
+# stack was actually deployed with: deploy/.env.example ships `EMBED_ORIGINS=`
+# (deny-all), and an unconfigured origin then gets no ACAO header back.
+if [[ -f "${ENV_FILE}" ]]; then
+  SMOKE_EMBED_ORIGINS="$(sed -n 's/^EMBED_ORIGINS=//p' "${ENV_FILE}" | tail -1 | tr -d '\r"' || true)"
+  export SMOKE_EMBED_ORIGINS
+fi
 ./scripts/deploy_smoke.sh --base-url "$BASE_URL" --compose-file "$COMPOSE_FILE" --max-wait "$TIMEOUT" \
   --site-slug "$site_slug" --capability-token "$cap_token" \
   || die "the API roundtrip failed (see [SMOKE] output above)"

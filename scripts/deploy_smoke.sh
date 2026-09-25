@@ -36,6 +36,8 @@ MAX_WAIT="${MAX_WAIT:-180}"  # seconds
 SITE_SLUG="${SMOKE_SITE_SLUG:-blog}"
 CAP_TOKEN="${SMOKE_CAPABILITY_TOKEN:-}"
 EMBED_TOKEN="${SMOKE_EMBED_TOKEN:-}"   # read-only (posts:read) token; the embed surface refuses write tokens
+EMBED_ORIGINS="${SMOKE_EMBED_ORIGINS:-}"   # the allowlist this stack was deployed with (empty = deny-all)
+CORS_PROBE_ORIGIN="${SMOKE_CORS_PROBE_ORIGIN:-http://localhost:3000}"
 POLL_INTERVAL=3
 
 # Parse args
@@ -66,6 +68,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --embed-token)
             EMBED_TOKEN="$2"
+            shift 2
+            ;;
+        --embed-origins)
+            EMBED_ORIGINS="$2"
+            shift 2
+            ;;
+        --cors-probe-origin)
+            CORS_PROBE_ORIGIN="$2"
             shift 2
             ;;
         *)
@@ -284,16 +294,47 @@ else
 fi
 
 # ---- 12. Verify CORS headers on embed endpoint ----
-log_info "Verifying CORS on embed endpoint..."
-CORS_RESPONSE=$(curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" \
+# Asserted in both directions, never warned away. The documented default is
+# `EMBED_ORIGINS=` (deny-all): a preflight from an origin that was not
+# configured must come back with *no* access-control-allow-origin, and when the
+# stack was deployed with an allowlist that lists the probe origin, the header
+# must echo it. A warn-only branch here is how this check died: the extraction
+# read `$(echo ... | grep ... | head -1 | ...)` under `set -euo pipefail`, so
+# with no ACAO header `grep` exited 1, pipefail failed the whole substitution
+# and bash -e killed the run *before* its own log_warn -- reddening the self-host
+# E2E job on a healthy stack (2026-09-25). A missing header is a result to
+# assert on, not a shell error, so the grep is guarded.
+log_info "Verifying CORS on embed endpoint (probe origin: ${CORS_PROBE_ORIGIN})..."
+CORS_RESPONSE=$(curl -s -D - -o /dev/null -H "Origin: ${CORS_PROBE_ORIGIN}" \
     -H "Access-Control-Request-Method: GET" \
     -X OPTIONS "${BASE_URL}/embed/v1/posts")
-ACCESS_CONTROL_ALLOW_ORIGIN=$(echo "${CORS_RESPONSE}" | grep -i "access-control-allow-origin:" | head -1 | cut -d' ' -f2- | tr -d '\r')
-if [[ -n "${ACCESS_CONTROL_ALLOW_ORIGIN}" ]]; then
-    log_info "CORS preflight works: ${ACCESS_CONTROL_ALLOW_ORIGIN}"
-else
-    log_warn "CORS preflight headers not present (EMBED_ORIGINS may not be configured)"
-fi
+ACCESS_CONTROL_ALLOW_ORIGIN=$(printf '%s\n' "${CORS_RESPONSE}" \
+    | { grep -i "^access-control-allow-origin:" || true; } \
+    | head -1 | cut -d' ' -f2- | tr -d '\r')
+
+case ",${EMBED_ORIGINS}," in
+    *",${CORS_PROBE_ORIGIN},"*)
+        # The stack was deployed with an allowlist that includes this origin.
+        if [[ "${ACCESS_CONTROL_ALLOW_ORIGIN}" != "${CORS_PROBE_ORIGIN}" ]]; then
+            log_error "EMBED_ORIGINS lists ${CORS_PROBE_ORIGIN} but the preflight returned '${ACCESS_CONTROL_ALLOW_ORIGIN:-no access-control-allow-origin header}'"
+            exit 1
+        fi
+        log_info "CORS preflight allowed the configured origin: ${ACCESS_CONTROL_ALLOW_ORIGIN}"
+        ;;
+    *)
+        # Either deny-all (EMBED_ORIGINS unset) or an allowlist without this
+        # origin: both must stay silent.  A header here is an open-embed hole.
+        if [[ -n "${ACCESS_CONTROL_ALLOW_ORIGIN}" ]]; then
+            log_error "CORS preflight allowed ${CORS_PROBE_ORIGIN}, which is not in EMBED_ORIGINS='${EMBED_ORIGINS}'"
+            exit 1
+        fi
+        if [[ -z "${EMBED_ORIGINS}" ]]; then
+            log_info "CORS deny-all confirmed (EMBED_ORIGINS unset): no access-control-allow-origin for ${CORS_PROBE_ORIGIN}"
+        else
+            log_info "CORS denied ${CORS_PROBE_ORIGIN} (not in EMBED_ORIGINS)"
+        fi
+        ;;
+esac
 
 # ---- All checks passed ----
 log_info "============================================"

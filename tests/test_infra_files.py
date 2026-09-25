@@ -392,3 +392,81 @@ def test_caddyfile_only_uses_matchers_it_can_adapt() -> None:
     assert matchers, "expected named matchers in the production Caddyfile"
     for ln in matchers:
         assert len(ln.split()) > 1, f"matcher without a value: {ln}"
+
+
+CURL_STUB = r"""#!/usr/bin/env bash
+# A curl stand-in for the deploy_smoke.sh regression test below: it answers every
+# URL the smoke script probes and never sends an access-control-allow-origin
+# header -- the documented deny-all default (`EMBED_ORIGINS=` in
+# deploy/.env.example).  `-w %{http_code}` callers get a status code, `-D`
+# callers get response headers, everyone else gets a body.
+set -euo pipefail
+args="$*"
+code="200"
+body=""
+headers=$'HTTP/1.1 200 OK\r\ncontent-type: application/javascript\r\n\r\n'
+case "$args" in
+    *"/embed/v1/posts"*)
+        if [[ "$args" == *"%{http_code}"* ]]; then
+            code="403"   # write/admin tokens must be refused on the embed surface
+        else
+            body='{"posts":[{"title":"Smoke Test Post"}],"total":1}'
+        fi
+        ;;
+    *"/embed/v1/agentcms.js"*) body="// agentcms-embed script" ;;
+    *"/posts.json"*)           body='{"items":[{"slug":"smoke-test-post","title":"Smoke Test Post"}]}' ;;
+    *"/v1/admin/tokens"*)      body='{"token":"acms_smoketoken"}' ;;
+    *"/publish"*)              body='{"status":"published"}' ;;
+    *"/c/"*)                   body='{"id":"11111111-1111-1111-1111-111111111111"}' ;;
+    *"/healthz"* | *"/readyz"*) ;;
+    *)                         body="<html><body><h1>Smoke Test Post</h1></body></html>" ;;
+esac
+if [[ "$args" == *"%{http_code}"* ]]; then
+    printf '%s' "$code"
+elif [[ "$args" == *"-D"* ]]; then
+    printf '%s' "$headers"
+else
+    printf '%s' "$body"
+fi
+"""
+
+
+def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None:
+    """Regression (#44): a missing CORS header must not kill the smoke run.
+
+    The CORS check read `$(echo ... | grep ... | head -1 | ...)` under
+    `set -euo pipefail`.  With the documented default (`EMBED_ORIGINS=` in
+    deploy/.env.example = deny-all) a preflight carries no
+    `access-control-allow-origin`, `grep` exits 1, pipefail fails the whole
+    substitution and bash -e ends the script *before* its own warn branch -- so
+    the self-host E2E job went red on a healthy stack (2026-09-25, d54b2ec) and
+    the operator saw "the API roundtrip failed" with no assertion behind it.
+    """
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    curl = stub_bin / "curl"
+    curl.write_text(CURL_STUB)
+    curl.chmod(0o755)
+
+    env = {**os.environ, "PATH": f"{stub_bin}{os.pathsep}{os.environ['PATH']}"}
+    proc = _run(
+        [
+            str(REPO_ROOT / "scripts" / "deploy_smoke.sh"),
+            "--base-url",
+            "http://stub.invalid",
+            "--compose-file",
+            "deploy/compose/docker-compose.prod.yml",
+            "--max-wait",
+            "5",
+            "--site-slug",
+            "blog",
+            "--capability-token",
+            "cap_blog_ab-cd_ef",  # base64url: the token may contain '-' and '_'
+            "--embed-token",
+            "cap_blog_ro-xy",
+        ],
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "ALL SMOKE TESTS PASSED" in proc.stdout, proc.stdout
+    assert "CORS deny-all confirmed" in proc.stdout, proc.stdout
