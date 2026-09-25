@@ -288,7 +288,10 @@ log_info "Verifying CORS on embed endpoint..."
 CORS_RESPONSE=$(curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" \
     -H "Access-Control-Request-Method: GET" \
     -X OPTIONS "${BASE_URL}/embed/v1/posts")
-ACCESS_CONTROL_ALLOW_ORIGIN=$(echo "${CORS_RESPONSE}" | grep -i "access-control-allow-origin:" | head -1 | cut -d' ' -f2- | tr -d '\r')
+# `|| true`: with EMBED_ORIGINS unset (deny-all is the documented default) there is no
+# header to find, and under `set -euo pipefail` the bare grep+head pipeline returns 1,
+# which aborts the run before the `log_warn` branch that exists for exactly this case.
+ACCESS_CONTROL_ALLOW_ORIGIN=$(echo "${CORS_RESPONSE}" | grep -i "access-control-allow-origin:" | head -1 | cut -d' ' -f2- | tr -d '\r' || true)
 if [[ -n "${ACCESS_CONTROL_ALLOW_ORIGIN}" ]]; then
     log_info "CORS preflight works: ${ACCESS_CONTROL_ALLOW_ORIGIN}"
 else
