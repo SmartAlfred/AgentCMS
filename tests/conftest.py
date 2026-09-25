@@ -87,7 +87,19 @@ def app(database_url: str):
 def db(database_url: str, app) -> Iterator[Session]:
     """An empty database and a session for the duration of one test."""
 
-    from app.db.session import session_scope
+    from app.config import reset_settings_cache
+    from app.db.session import dispose_engine, session_scope
+
+    # Re-assert the suite's binding for this test.  The backup/restore drill (#39)
+    # points the process-wide engine at its own throwaway database (`agentcms`) and
+    # disposes it on the way out; anything that leaves the binding behind makes
+    # every later test connect to a database that no longer exists -- which is
+    # exactly how the suite went red on CI (`FATAL: database "agentcms" does not
+    # exist`, 448 errors) while passing on a laptop whose dev database is called
+    # `agentcms`.  Binding here is cheap and makes the suite order-independent.
+    os.environ["DATABASE_URL"] = database_url
+    reset_settings_cache()
+    dispose_engine()
 
     _truncate_all(database_url)
     with session_scope() as session:
