@@ -232,6 +232,7 @@ def run_level(
     headers: dict[str, str],
     timeout_s: float,
     error_budget_ratio: float,
+    verify_tls: bool = True,
 ) -> LevelResult:
     """Run one level and return its raw samples plus the summary of them."""
 
@@ -247,7 +248,7 @@ def run_level(
         nonlocal issued
         local: list[Sample] = []
         seq = 0
-        with httpx.Client(timeout=timeout_s, headers=headers) as client:
+        with httpx.Client(timeout=timeout_s, headers=headers, verify=verify_tls) as client:
             while True:
                 if time.perf_counter() >= deadline:
                     break
@@ -385,6 +386,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--error-budget-ratio", type=float, default=DEFAULT_ERROR_BUDGET_RATIO)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="per-request timeout (s)")
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="skip TLS verification (a self-hosted stack serves Caddy's internal CA on localhost)",
+    )
     parser.add_argument("--json-out", default="", help="write the raw result as JSON")
     parser.add_argument("--json-samples", action="store_true", help="include every sample in --json-out")
     parser.add_argument("--env-note", default="", help="free-text environment pin recorded in --json-out")
@@ -449,6 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             headers=headers,
             timeout_s=args.timeout,
             error_budget_ratio=args.error_budget_ratio,
+            verify_tls=not args.insecure,
         )
         results.append(result)
         reason = _trip_reason(result.summary, stop_error_ratio, stop_p95_ms)
@@ -478,6 +485,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "url": args.url,
             "paths": list(paths),
             "authenticated": bool(args.auth_token),
+            "tls_verified": not args.insecure,
             "environment": args.env_note,
             "mode": "sweep" if sweep else ("duration" if not count_mode else "count"),
         },
