@@ -37,6 +37,7 @@ cd "$PROJECT_DIR"
 TAG_A="${TAG_A:-agentcms:upgrade-smoke-a}"
 TAG_B="${TAG_B:-agentcms:upgrade-smoke-b}"
 BASE_URL="${BASE_URL:-http://localhost:8000}"
+SITE_SLUG="${SITE_SLUG:-blog}"
 HEALTH_URL="${BASE_URL}/healthz"
 READY_URL="${BASE_URL}/readyz"
 
@@ -79,7 +80,7 @@ create_admin_token() {
   local token
   token=$(curl -fsS -X POST "${BASE_URL}/v1/admin/tokens" \
     -H "Content-Type: application/json" \
-    -d '{"label":"upgrade-smoke","scopes":["posts:read","posts:write","posts:publish","assets:write"]}' \
+    -d '{"label":"upgrade-smoke","scopes":["posts:read","posts:write","posts:publish","assets:write","sites:write"]}' \
     | jq -r '.token // empty')
   if [[ -z "$token" || "$token" == "null" ]]; then
     log_error "Failed to create admin token"
@@ -88,38 +89,27 @@ create_admin_token() {
   echo "$token"
 }
 
-create_site() {
+require_site() {
   local admin_token="$1"
-  local site_id
-  site_id=$(curl -fsS -X POST "${BASE_URL}/v1/sites" \
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: Bearer ${admin_token}" \
-    -H "Content-Type: application/json" \
-    -d '{"slug":"blog","name":"Upgrade Smoke Test Blog","publish_mode":"auto"}' \
-    | jq -r '.id // empty')
-  if [[ -z "$site_id" || "$site_id" == "null" ]]; then
-    # Site might already exist
-    site_id=$(curl -fsS -X GET "${BASE_URL}/v1/sites/blog" \
-      -H "Authorization: Bearer ${admin_token}" \
-      | jq -r '.id // empty')
-  fi
-  if [[ -z "$site_id" || "$site_id" == "null" ]]; then
-    log_error "Failed to create/get site"
+    "${BASE_URL}/v1/sites/${SITE_SLUG}/posts")
+  if [[ "$code" != "200" ]]; then
+    log_error "No site '${SITE_SLUG}' (GET /v1/sites/${SITE_SLUG}/posts -> ${code})"
+    log_error "#44: the API cannot create a site yet -- seed it: python -m scripts.seed"
     return 1
   fi
-  echo "$site_id"
+  echo "$SITE_SLUG"
 }
 
 create_capability_link() {
-  local admin_token="$1"
-  local verbs="${2:-posts:read,posts:write,posts:publish}"
-  local token
-  token=$(curl -fsS -X POST "${BASE_URL}/v1/sites/blog/capability-links" \
-    -H "Authorization: Bearer ${admin_token}" \
-    -H "Content-Type: application/json" \
-    -d "{\"label\":\"upgrade-smoke\",\"verbs\":[${verbs//,/\",\"}],\"ttl_minutes\":60}" \
-    | jq -r '.token // empty')
+  # #44: no API endpoint mints capability links yet; scripts/seed.py (`make seed`)
+  # prints one, and the caller hands it in through SMOKE_CAPABILITY_TOKEN.
+  local token="${SMOKE_CAPABILITY_TOKEN:-}"
   if [[ -z "$token" || "$token" == "null" ]]; then
-    log_error "Failed to create capability link"
+    log_error "No capability token: export SMOKE_CAPABILITY_TOKEN=cap_... (#44: no API mints one;"
+    log_error "python -m scripts.seed prints one)"
     return 1
   fi
   echo "$token"
@@ -211,7 +201,7 @@ main() {
   ADMIN_TOKEN=$(create_admin_token) || exit 1
   log_info "Admin token created"
 
-  create_site "$ADMIN_TOKEN" >/dev/null || exit 1
+  require_site "$ADMIN_TOKEN" >/dev/null || exit 1
   log_info "Site created"
 
   CAP_TOKEN=$(create_capability_link "$ADMIN_TOKEN") || exit 1

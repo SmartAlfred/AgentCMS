@@ -401,3 +401,41 @@ class TagMergeResponse(BaseModel):
     source_tag: str
     target_tag: str
     affected_posts: int
+
+
+# ---------------------------------------------------------------------------
+# Sites (#45)
+# ---------------------------------------------------------------------------
+
+
+class SiteCreateRequest(BaseModel):
+    """Request body for ``POST /v1/sites``."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    slug: str
+    name: str
+    base_url: str | None = None
+    publish_mode: str = "auto"
+
+
+class SiteRead(BaseModel):
+    """A site as returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    slug: str
+    name: str
+    base_url: str | None = None
+    publish_mode: str = "auto"
+    created_at: datetime
+
+
+class SiteListResponse(BaseModel):
+    """List of sites."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[SiteRead]
+    count: int
