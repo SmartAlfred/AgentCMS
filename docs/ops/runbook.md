@@ -408,6 +408,7 @@ Fill this table every drill; if a step crosses the target, open a follow-up.
 | Rollback (`deploy.sh --rollback` → `/readyz` green) | — | < 2 min | |
 | Deploy with pending migrations (gate + migrate job + rollout) | — | < 5 min | |
 | Request-id trace across all four artifacts | — | < 5 min | |
+| Alert delivery (fault → human channel) | 2026-09-25 | < 300 s | 14.4 s (dead-man) / 57.4 s (readyz) / 37.4 s (migrate) / 49.4 s (restart) |
 
 ---
 
@@ -601,3 +602,67 @@ Wrong-passphrase, truncated-dump and missing-dump cases were exercised too: exit
 with the live database left untouched — a restore cannot half-succeed silently.
 
 *Next drill due: 2026-12-25 (quarterly), or after any change to the backup, retention or S3 configuration.*
+
+---
+
+## 9. Dated alert-delivery drill (2026-09-25) — the page is proven, not assumed
+
+Full log with every timestamp: `docs/ops/drills/2026-09-25-alert-delivery.md`
+(transcript artifact: alert payloads + arrival times).
+
+### The ops set
+
+```bash
+export AGENTCMS_NETWORK=agentcms-prod_default      # <compose project>_default
+docker compose -p agentcms-prod --env-file .env \
+  -f deploy/compose/docker-compose.prod.yml \
+  -f deploy/compose/docker-compose.observability.yml up -d
+```
+
+Prometheus (scrapes `/metrics` with `X-Metrics-Token` rendered at container start
+from `METRICS_TOKEN` — never committed), Alertmanager, blackbox-exporter
+(`/healthz` + `/readyz` from outside the app process), a Docker container
+exporter (`scripts/ops/docker_exporter.py`) and Grafana with the committed
+dashboard at `docs/ops/grafana-dashboard.json`.  Everything binds to loopback;
+reach Grafana over an SSH tunnel or the Caddy proxy.
+
+### The rules that page (identical text in `app/observability/alerts.py` and `docs/ops/prometheus-rules.yml`)
+
+| Alert | PromQL | for |
+| --- | --- | --- |
+| `ReadyzNotOk` | `(probe_success{job="agentcms-readiness"} == 0) OR (agentcms_readyz_status != 200)` | 30s |
+| `ContainerRestart` | `time() - agentcms_container_last_restart_observed_timestamp_seconds{job="docker-exporter"} < 600` | 0s |
+| `MigrateJobFailed` | `agentcms_container_last_exit_code{job="docker-exporter",service="migrate"} != 0` | 0s |
+| `MetricsScrapeMissing` | `(up{job="agentcms-api"} == 0) OR (absent(up{job="agentcms-api"}))` | 0s |
+
+### How to re-run the page drill (one fault at a time, ~2 minutes)
+
+```bash
+date -u +%FT%TZ                                  # T_fail
+docker stop ws3-drill-db-1                       # the fault: database gone
+# read the delivery timestamp the sink recorded:
+docker exec ws3-obs-alert-sink-1 cat /data/alerts.jsonl | tail -1
+docker start ws3-drill-db-1                      # recovery → resolved notice
+```
+
+### Measured 2026-09-25 (budget: fault → human channel < 300 s)
+
+| Rule | T_fail | Delivered | Seconds |
+| --- | --- | --- | ---: |
+| `MetricsScrapeMissing` | 13:47:28Z | 13:47:42.362Z | 14.4 |
+| `ReadyzNotOk` | 13:48:00Z | 13:48:57.418Z | 57.4 |
+| `MigrateJobFailed` | 13:50:20Z | 13:50:57.401Z | 37.4 |
+| `ContainerRestart` | 13:54:38Z | 13:55:27.362Z | 49.4 |
+
+Resolved notifications arrived for both database rounds (13:49:42.373Z and
+13:49:57.465Z, ntfy HTTP 200).  Clean run afterwards: no pages for 10+ minutes
+of normal traffic.
+
+**Still unproven, stated plainly:** an **off-host** uptime probe.  blackbox runs
+in the ops set on the same host, which is not off-host, and this stack has no
+public HTTPS endpoint and no free-tier prober account — the ask is a free-tier
+account (healthchecks.io / UptimeRobot) plus a reachable URL, not something the
+drill can invent.
+
+**Next drill due 2026-12-25**, and after any change to the rules, the
+Alertmanager route or the channel.
