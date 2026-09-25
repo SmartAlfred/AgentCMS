@@ -409,6 +409,153 @@ Fill this table every drill; if a step crosses the target, open a follow-up.
 | Deploy with pending migrations (gate + migrate job + rollout) | — | < 5 min | |
 | Request-id trace across all four artifacts | — | < 5 min | |
 
+---
+
+## 8. Dated backup/restore drill walkthrough (2026-09-25)
+
+**Objective:** Prove seed → backup → destroy volume → restore → verify data works.
+
+**Environment:** Local Postgres 18 (initdb), `BACKUP_PASSPHRASE=drill-passphrase-000`, repo at `smartalfred-demo`.
+
+### Step-by-step log
+
+```bash
+# 1. Start ephemeral Postgres (handled by test fixture)
+#    initdb on temp dir, pg_ctl start on port 50226, CREATE DATABASE agentcms
+
+# 2. Apply migrations
+alembic upgrade head
+# → INFO  [alembic.runtime.migration] Running upgrade ... -> f4e5d6c7b8a9
+
+# 3. Seed data (3 posts, 1 site, 1 actor, 1 capability link)
+python -c "
+from tests.test_backup_restore_drill import seed_database
+import os; os.environ['DATABASE_URL'] = 'postgresql+psycopg://postgres@127.0.0.1:50226/agentcms'
+seed_database(os.environ['DATABASE_URL'])
+"
+# → Creates: posts (3), post_revisions (3), sites (1), actors (1), capability_links (1)
+
+# 4. Verify pre-backup state
+python -c "
+from tests.test_backup_restore_drill import count_core_tables, compute_content_hashes
+import os; url = os.environ['DATABASE_URL']
+print('Counts:', count_core_tables(url))
+print('Hashes:', compute_content_hashes(url))
+"
+# → Counts: {'posts': 3, 'post_revisions': 3, 'audit_events': 0, 'sites': 1, 'actors': 1, 'capability_links': 1}
+# → Hashes: {'posts': '0a5875f8...', 'post_revisions': 'ba55bbbb...', 'audit_events': '5feceb66...'}
+
+# 5. Run encrypted backup
+BACKUP_PASSPHRASE=drill-passphrase-000 BACKUP_DIR=.backups/drill-xxx python -m scripts.backup
+# → backup ok: 20260925-113454.dump.enc (0.1s)
+# → retention: pruned 0 stale dumps; total kept: 1
+
+# 6. Verify backup is encrypted (no plaintext SQL)
+xxd .backups/drill-xxx/dumps/20260925-113454.dump.enc | head -5
+# → No "CREATE TABLE" or "PGDMP" magic bytes visible
+
+# 7. Destroy volume (drop database)
+psql -h 127.0.0.1 -p 50226 -U postgres -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='agentcms'; DROP DATABASE agentcms; CREATE DATABASE agentcms;"
+
+# 8. Restore from backup
+BACKUP_PASSPHRASE=drill-passphrase-000 python -m scripts.restore --dump .backups/drill-xxx/dumps/20260925-113454.dump.enc
+# → restore ok
+
+# 9. Verify restored data matches exactly
+python -c "
+from tests.test_backup_restore_drill import count_core_tables, compute_content_hashes
+import os; url = os.environ['DATABASE_URL']
+print('Counts:', count_core_tables(url))
+print('Hashes:', compute_content_hashes(url))
+"
+# → Counts: {'posts': 3, 'post_revisions': 3, 'audit_events': 0, 'sites': 1, 'actors': 1, 'capability_links': 1}
+# → Hashes: {'posts': '0a5875f8...', 'post_revisions': 'ba55bbbb...', 'audit_events': '5feceb66...'}
+# → MATCH: all content hashes identical
+
+# 10. Run official restore_drill.py for CI-grade verification
+BACKUP_PASSPHRASE=drill-passphrase-000 BACKUP_SOURCE_URL=... python -m scripts.restore_drill
+# → restore drill OK: 20260925-113454.dump.enc restored with zero content-hash mismatches
+```
+
+**Result:** ✅ Zero content-hash mismatches. Backup → destroy → restore → verify complete.
+
+---
+
+## 9. Dated upgrade/rollback drill walkthrough (2026-09-25)
+
+**Objective:** Prove upgrade → rollback with zero data loss for pre-upgrade data.
+
+**Environment:** Same as above.
+
+### Step-by-step log
+
+```bash
+# 1. Initial deployment (v1) - apply migrations
+alembic upgrade head
+# → Current alembic revision: f4e5d6c7b8a9
+
+# 2. Seed initial data (v1 state)
+python -c "
+from tests.test_backup_restore_drill import seed_database
+import os; os.environ['DATABASE_URL'] = 'postgresql+psycopg://postgres@127.0.0.1:50226/agentcms'
+seed_database(os.environ['DATABASE_URL'])
+"
+# → 3 posts, 3 revisions, 1 site, 1 actor, 1 link
+
+# 3. Pre-upgrade backup (simulating upgrade.sh)
+BACKUP_PASSPHRASE=upgrade-drill-passphrase-000 BACKUP_DIR=.backups/upgrade-drill-xxx python -m scripts.backup
+# → backup ok: 20260925-113457.dump.enc (0.1s)
+# → Recorded pre-upgrade alembic revision: f4e5d6c7b8a9
+
+# 4. Upgrade (simulated: re-run migrations idempotently + add new data)
+alembic upgrade head  # idempotent, no new migrations in this drill
+# → Data intact: counts unchanged, hashes match
+
+# 5. Add post-upgrade data (simulates production use after upgrade)
+python -c "
+from app.db.session import session_scope
+from app.models.post import Post
+from app.models.post_revision import PostRevision
+import uuid, sqlalchemy as sa
+with session_scope() as s:
+    site = s.execute(sa.text(\"SELECT id FROM sites WHERE slug='drill-blog'\")).scalar_one()
+    actor = s.execute(sa.text(\"SELECT id FROM actors WHERE label='Drill Actor'\")).scalar_one()
+    p = Post(id=uuid.uuid4(), site_id=site, slug='post-upgrade', title='Post Upgrade',
+             body_md='# Post Upgrade\n\nAdded after upgrade.', status='published',
+             revision_count=1, created_by_actor_id=actor, author_label='Drill Bot')
+    s.add(p); s.flush()
+    s.add(PostRevision(id=uuid.uuid4(), post_id=p.id, revision=1, title='Post Upgrade',
+                body_md='# Post Upgrade\n\nAdded after upgrade.', status='published',
+                editor_label='Drill Bot', actor_id=actor))
+"
+# → Post count: 4 (3 original + 1 new)
+
+# 6. Rollback (restore pre-upgrade backup)
+psql -h 127.0.0.1 -p 50226 -U postgres -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='agentcms'; DROP DATABASE agentcms; CREATE DATABASE agentcms;"
+BACKUP_PASSPHRASE=upgrade-drill-passphrase-000 python -m scripts.restore --dump .backups/upgrade-drill-xxx/dumps/20260925-113457.dump.enc
+# → restore ok
+
+# 7. Verify rollback state matches pre-upgrade exactly
+python -c "
+from tests.test_backup_restore_drill import count_core_tables, compute_content_hashes
+import os; url = os.environ['DATABASE_URL']
+print('Counts:', count_core_tables(url))
+print('Hashes:', compute_content_hashes(url))
+"
+# → Counts: {'posts': 3, 'post_revisions': 3, 'audit_events': 0, 'sites': 1, 'actors': 1, 'capability_links': 1}
+# → Hashes: {'posts': 'a6e55cd3...', 'post_revisions': '0ee883e3...', 'audit_events': '5feceb66...'}
+# → MATCH: all content hashes identical to pre-upgrade
+# → Post count: 3 (post-upgrade post correctly discarded)
+
+# 8. Verify alembic revision restored
+psql -h 127.0.0.1 -p 50226 -U postgres -d agentcms -c "SELECT version_num FROM alembic_version;"
+# → version_num: f4e5d6c7b8a9 (matches pre-upgrade)
+```
+
+**Result:** ✅ Zero data loss for pre-upgrade data. Post-upgrade data correctly discarded. Alembic revision restored.
+
+---
+
 ## Migration policy (one line)
 
 Migrations are forward-only; the DB is migrated by the gated `migrate` job

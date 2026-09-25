@@ -2,7 +2,8 @@
 # selfhost_e2e.sh — prove the documented self-host path works, from nothing (#37).
 #
 #   ./scripts/selfhost_e2e.sh                 deploy .env -> stack -> migrate ->
-#                                             healthz/readyz -> API roundtrip -> down -v
+#                                             healthz/readyz -> seed a site ->
+#                                             API roundtrip -> down -v
 #   ./scripts/selfhost_e2e.sh --keep          leave the stack running for poking at
 #   ./scripts/selfhost_e2e.sh --reuse-env     run against an existing .env (repeat runs)
 #   ./scripts/selfhost_e2e.sh --timeout 300   raise the per-assertion wait budget (s)
@@ -34,7 +35,7 @@ log()  { printf '\033[0;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[0;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[0;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -165,6 +166,9 @@ wait_for_http() { # url label
 
 wait_for_http "$BASE_URL/healthz" "GET /healthz"
 wait_for_http "$BASE_URL/readyz" "GET /readyz"
+# The human dashboard is a first-class surface (#42 404'd in every deploy);
+# a self-host E2E that never loads it is not proving a deploy works.
+wait_for_http "$BASE_URL/dashboard/login" "GET /dashboard/login"
 
 # --- 5. no crash loop: restarts must be 0, caddy must be up ---------------
 
@@ -184,8 +188,27 @@ log "caddy: running"
 
 # --- 6. API roundtrip: create site -> publish post -> fetch public URL -----
 
-log "API roundtrip (create site -> capability link -> publish post -> public page)"
+# --- 6. provision a site: the only shipped mechanism is the seed script (#44) ---
+# The API exposes no POST /v1/sites and the dashboard only UPDATEs the single
+# existing row, so a fresh deployment cannot create a site over HTTP yet (#44).
+# `python -m scripts.seed` (the documented `make seed`) ships in the image and is
+# idempotent; without it there is no site to publish into and the roundtrip below
+# would fail against a perfectly healthy stack.
+log "provisioning the demo site: python -m scripts.seed (the documented \`make seed\` target)"
+if ! seed_out="$(compose exec -T api python -m scripts.seed)"; then
+  die "python -m scripts.seed failed: no API can create a site yet (#44), so the stack has nothing to publish into"
+fi
+printf '%s\n' "$seed_out" | sed 's/^/    /'
+site_slug="$(printf '%s\n' "$seed_out" | sed -n 's|.*Demo site: */v1/sites/\([A-Za-z0-9_-]*\).*|\1|p' | head -1)"
+cap_token="$(printf '%s\n' "$seed_out" | grep -oE 'cap_[A-Za-z0-9_]+' | head -1)"
+[ -n "$site_slug" ] || die "could not read the seeded site slug from scripts/seed.py output"
+[ -n "$cap_token" ] || die "scripts/seed.py did not print a capability token (see #44)"
+
+# --- 7. API roundtrip: capability link -> publish post -> public page ---------
+
+log "API roundtrip (minted capability link -> publish post -> public page)"
 ./scripts/deploy_smoke.sh --base-url "$BASE_URL" --compose-file "$COMPOSE_FILE" --max-wait "$TIMEOUT" \
+  --site-slug "$site_slug" --capability-token "$cap_token" \
   || die "the API roundtrip failed (see [SMOKE] output above)"
 
 log "SELF-HOST E2E PASSED — the documented path deploys and serves content"

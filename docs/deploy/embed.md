@@ -36,18 +36,15 @@ That's it. Your published posts now render inside `#cms`.
 
 The embed script needs a **read-only** capability token.
 
-**Via Dashboard** (recommended):
-1. Open `https://your-cms.com/dashboard`
-2. Go to your site → Capability Links → Create Link
-3. Label: `embed`, Verbs: `posts:read` only, TTL: 1 year (525600 minutes)
-4. Copy the `cap_blog_xxx...` token
+**Today (until #44)**: neither the API nor the dashboard can mint a capability
+link yet -- the documented route `POST /v1/sites/{slug}/capability-links` does not
+exist, and the dashboard has no Capability Links screen. The seed script mints one
+and prints it:
 
-**Via API**:
 ```bash
-curl -X POST https://your-cms.com/v1/sites/blog/capability-links \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"label":"embed","verbs":["posts:read"],"ttl_minutes":525600}'
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
+  exec -T api python -m scripts.seed
+#   Capability token:  cap_blog_xxxxxxxx
 ```
 
 ### 2. Configure Allowed Origins

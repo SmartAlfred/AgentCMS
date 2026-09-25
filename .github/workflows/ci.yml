@@ -190,3 +190,47 @@ jobs:
         working-directory: agentcms-clean
         run: |
           docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml logs --tail=200 || true
+  
+  # Backup/restore + upgrade/rollback drills (#39). Runs the full drill against
+  # a throwaway PostgreSQL cluster, proving the runbook procedures work end-to-end.
+  drills:
+    name: backup/restore + upgrade/rollback drills
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # The drill tests create/drop their own databases on this server.
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+      # Require Docker for the self-hosted CLI tests; the drills use the service container.
+      AGENTCMS_REQUIRE_DOCKER: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install (pinned from requirements.lock.txt)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps -r requirements.lock.txt
+          python -m pip install --no-deps -e .
+      - name: Install PostgreSQL client tools (pg_dump, pg_restore, psql, initdb)
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client-16 postgresql-16
+      - name: Run backup/restore drill
+        run: pytest tests/test_backup_restore_drill.py::TestFullBackupRestoreDrill -v
+      - name: Run upgrade/rollback drill
+        run: pytest tests/test_backup_restore_drill.py::TestUpgradeRollbackDrill -v

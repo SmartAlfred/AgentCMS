@@ -323,3 +323,22 @@ def test_smoke_scripts_read_the_token_field_the_api_returns() -> None:
         text = (REPO_ROOT / script).read_text()
         assert "jq -r '.plaintext" not in text, f"{script} parses a field the API never returns"
         assert "jq -r '.token // empty'" in text, f"{script} does not parse TokenCreateResponse.token"
+
+
+def test_selfhost_e2e_asserts_the_human_dashboard() -> None:
+    """#42 shipped a dashboard that 404'd in every deployment because nothing
+    asserted the human surface. The deploy proof must load it (#37)."""
+    script = REPO_ROOT / "scripts" / "selfhost_e2e.sh"
+    body = script.read_text()
+    check = 'wait_for_http "$BASE_URL/dashboard/login" "GET /dashboard/login"'
+    assert check in body, (
+        "scripts/selfhost_e2e.sh must assert the dashboard login page with a real"
+        " status check (not a comment)"
+    )
+
+
+def test_deploy_smoke_token_can_create_a_site() -> None:
+    """#45: the smoke token must carry `sites:write`, or `make selfhost-verify`
+    fails on the very first API call a self-hoster makes."""
+    body = (REPO_ROOT / "scripts" / "deploy_smoke.sh").read_text()
+    assert '"sites:write"' in body
