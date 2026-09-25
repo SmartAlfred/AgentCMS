@@ -4,7 +4,6 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 from app.config import Settings
 from app.main import create_app
 from app.models.actor import Actor
@@ -410,12 +409,11 @@ def _repo_root() -> Path:
 def test_compose_prod_parses() -> None:
     """docker-compose.prod.yml parses without errors."""
     import os
-    import shutil
     import subprocess
 
-    docker_path = shutil.which("docker")
-    if not docker_path:
-        pytest.skip("docker not available")
+    from tests.pg import skip_or_fail_without_docker
+
+    skip_or_fail_without_docker("deploy/compose/docker-compose.prod.yml parsing")
 
     repo_root = _repo_root()
     env = os.environ.copy()

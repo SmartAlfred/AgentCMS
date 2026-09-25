@@ -56,11 +56,21 @@ make selfhost DOMAIN=your-domain.com CADDY_EMAIL=you@example.com
 curl https://your-domain.com/healthz
 # {"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
 
+# 4. Prove it serves content: liveness, readiness and a real roundtrip
+#    (create a site -> publish a post -> fetch it from the public URL).
+#    Non-destructive: safe to run on a live host.
+make selfhost-verify
+
 # By hand instead? cp deploy/.env.example .env, edit SECRET_KEY, POSTGRES_PASSWORD
 # and AGENTCMS_IMAGE_TAG (required in production), then:
-#   docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build --build
+#   docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
 # The explicit --env-file matters: compose reads .env from the directory of the
 # compose file it is given, never from your current directory (#35).
+#
+# CI proves this path on every push by running `make selfhost-e2e` from a clean
+# checkout: deploy -> migrate -> /healthz + /readyz -> create a site -> publish a
+# post -> fetch the public URL. It is destructive (ends with `down -v`, wiping the
+# database volume), so run it on a throwaway VM or a fresh clone.
 ```
 
 **Full guide**: [docs/deploy/quickstart.md#docker-compose-on-a-vm-recommended-default](docs/deploy/quickstart.md#docker-compose-on-a-vm-recommended-default)

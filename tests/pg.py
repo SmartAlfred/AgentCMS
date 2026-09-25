@@ -358,3 +358,36 @@ def alembic_ok(*args: str, database_url: str) -> str:
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result.stdout
+
+
+def docker_required() -> bool:
+    """True when a missing Docker daemon must fail the suite instead of skipping it.
+
+    CI sets AGENTCMS_REQUIRE_DOCKER=1.  A deploy check that skips is how #35 and
+    #36 shipped, so on the runners "no Docker" is a failure, not a green run.
+    """
+    import os
+
+    return os.environ.get("AGENTCMS_REQUIRE_DOCKER", "").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "no",
+    }
+
+
+def skip_or_fail_without_docker(what: str) -> None:
+    """Skip when Docker is genuinely unavailable — unless it is required (#37)."""
+    if docker_available():
+        return
+    import os
+
+    import pytest
+
+    message = (
+        f"{what} needs a running Docker daemon (docker CLI present: "
+        f"{bool(os.environ.get('PATH')) and bool(__import__('shutil').which('docker'))})."
+    )
+    if docker_required() or os.environ.get("AGENTCMS_REQUIRE_DOCKER"):
+        pytest.fail(message + " AGENTCMS_REQUIRE_DOCKER is set, so this is a FAILURE, not a skip.")
+    pytest.skip(message)

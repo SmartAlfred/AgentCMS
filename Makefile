@@ -26,7 +26,7 @@ DOCS_URL   := http://$(HOST):$(PORT)/docs
 
 .PHONY: help
 help: ## Show this help
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | \
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[1m%-14s\033[0m %s\n", $$1, $$2}'
 
 $(VENV)/bin/python:
@@ -138,6 +138,14 @@ check-doc-urls: install ## Check documented live URLs return 2xx
 .PHONY: selfhost
 selfhost: ## Self-host the production stack: generate .env, validate, build, start
 	./scripts/selfhost.sh
+
+.PHONY: selfhost-e2e
+selfhost-e2e: ## Prove the documented self-host path end to end (needs Docker)
+	./scripts/selfhost_e2e.sh
+
+.PHONY: selfhost-verify
+selfhost-verify: ## Verify a running self-hosted stack (healthz + readyz + API roundtrip)
+	./scripts/deploy_smoke.sh
 
 .PHONY: selfhost-setup
 selfhost-setup: ## Only write/refresh the production .env (no Docker needed)
