@@ -88,6 +88,10 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="ghcr.io/${{ steps.norm.outputs.image }}"
+          # Idempotency keys off this marker.  Matching the literal text 'sha256:'
+          # suppressed the append on v0.3.1, because the hand-written notes mentioned
+          # '@sha256:…' as prose.  Only a real digest block carries the marker.
+          MARKER='<!-- agentcms-image-digest -->'
           ref="${{ steps.tag.outputs.ref }}"
           digest="${{ steps.push.outputs.digest }}"
           pinned="${IMAGE}@${digest}"
@@ -110,7 +114,7 @@ jobs:
             exit 0
           fi
           gh release view "$ref" --json body -q .body > /tmp/notes.md
-          if grep -q 'sha256:' /tmp/notes.md; then
+          if grep -qF "$MARKER" /tmp/notes.md; then
             echo "release notes already record a digest — leaving them alone"
             exit 0
           fi
@@ -124,6 +128,8 @@ jobs:
             echo ""
             echo "Also published as \`${IMAGE}:${ref}\` (multi-arch: linux/amd64, linux/arm64)."
             echo "Pin the **digest**, not the tag: \`AGENTCMS_IMAGE_TAG=${pinned}\`."
+            echo ""
+            echo "$MARKER"
           } >> /tmp/notes.md
           gh release edit "$ref" --notes-file /tmp/notes.md
 

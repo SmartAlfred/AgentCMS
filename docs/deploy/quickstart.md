@@ -42,8 +42,9 @@ curl https://your-domain.com/healthz
 
 # 4. Prove it serves content: liveness, readiness and a real roundtrip
 #    (publish a post through a capability link -> fetch it from the public URL).
-#    It needs an existing site and a capability token, because nothing can create
-#    a site or mint a link over the API yet (#44) -- the seed script does both:
+#    It needs an existing site and a capability token; the seed script creates
+#    both in one step (the API can too now: POST /v1/sites, and POST /v1/admin/tokens
+#    authenticated with the ADMIN_TOKEN bootstrap secret):
 CAP=$(docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
         exec -T api python -m scripts.seed | sed -n 's/.*Capability token: *//p')
 make selfhost-verify CAPABILITY_TOKEN="$CAP"
@@ -59,6 +60,25 @@ make selfhost-verify CAPABILITY_TOKEN="$CAP"
 # publish a post via a capability link -> fetch the public URL. It is destructive (ends with `down -v`, wiping the
 # database volume), so run it on a throwaway VM or a fresh clone.
 ```
+
+### Pin a released image instead of building (optional)
+
+`make selfhost` above builds from source and stays the documented default. Released
+images are also published to GHCR (`linux/amd64` + `linux/arm64`), and are best pinned
+by digest — a tag can be re-pointed at different bytes:
+
+```bash
+# AgentCMS v0.3.1 -- copy the `pin this` line from the release notes of the tag you want
+AGENTCMS_IMAGE_TAG=ghcr.io/smartalfred/agentcms@sha256:c25db8216b7a61035980822838b7b89c46e6e07f9a34074694353569cc92dd85
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml run --rm migrate
+```
+
+Refresh the pin at each release; roll back by pinning the previous digest. See
+[docs/DEPLOYING.md §9](../DEPLOYING.md) for the refresh/rollback procedure and the
+current package-visibility caveat.
+
+---
 
 **Full guide**: [docs/DEPLOYING.md](../DEPLOYING.md)
 

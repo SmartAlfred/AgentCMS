@@ -743,3 +743,23 @@ def test_selfhost_setup_generates_an_admin_token() -> None:
     body = (REPO_ROOT / "scripts" / "selfhost.sh").read_text()
     assert "ADMIN_TOKEN" in body
     assert "openssl rand" in body or "secrets" in body, "ADMIN_TOKEN must be generated"
+
+
+def test_deploy_docs_pin_a_released_image_digest() -> None:
+    """#38: the deploy docs must pin a real released digest, not a tag or a placeholder."""
+    import tomllib
+
+    version = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]["version"]
+    tag = f"v{version}"
+    deploying = (REPO_ROOT / "docs/DEPLOYING.md").read_text()
+    quickstart = (REPO_ROOT / "docs/deploy/quickstart.md").read_text()
+    release = (REPO_ROOT / ".github/workflows/release.yml").read_text()
+    digest = re.compile(r"ghcr\.io/smartalfred/agentcms@sha256:[0-9a-f]{64}")
+
+    assert digest.search(deploying), "docs/DEPLOYING.md must pin the released image by digest"
+    assert digest.search(quickstart), "docs/deploy/quickstart.md must show the digest to pin"
+    assert tag in deploying, f"docs/DEPLOYING.md must name the current release tag {tag}"
+    # The release workflow used to skip recording the digest whenever the notes merely
+    # mentioned 'sha256:', so a release could ship with no pin. Key off a marker instead.
+    assert "agentcms-image-digest" in release
+    assert "grep -q 'sha256:'" not in release

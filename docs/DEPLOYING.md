@@ -267,28 +267,40 @@ verify OK: 23 files matched manifest.json for /private/tmp/agentcms-export
 
 ## 9. Using published GHCR images (self-host)
 
-Starting with v0.3.1, every release publishes a **multi-arch image to GHCR**
-with SBOM and provenance attestation. Self-hosters should pin the **digest**
-(from the release output or `docker pull`) for an immutable, reproducible deploy.
+Every release from v0.3.1 publishes a **multi-arch image to GHCR**
+(`linux/amd64` + `linux/arm64`) with SBOM and provenance attestation. Pin the
+**digest** — tags move, digests do not.
 
 ```text
-# 1. Pull the image (verifies provenance + fetches manifest for your arch)
-$ docker pull ghcr.io/smartalfred/agentcms:v0.3.1
-…
-Digest: sha256:abc123def456…
+# AgentCMS v0.3.1, as deployed and asserted by the release run:
+ghcr.io/smartalfred/agentcms@sha256:c25db8216b7a61035980822838b7b89c46e6e07f9a34074694353569cc92dd85
 
-# 2. Use the digest in your .env (NOT the tag — tags are mutable)
-AGENTCMS_IMAGE_TAG=ghcr.io/smartalfred/agentcms@sha256:abc123def456
+# use the digest in your .env (NOT the tag)
+AGENTCMS_IMAGE_TAG=ghcr.io/smartalfred/agentcms@sha256:c25db8216b7a61035980822838b7b89c46e6e07f9a34074694353569cc92dd85
 ```
 
-The release workflow (`.github/workflows/release.yml`) prints the exact digest
-in its `document-digest` job output. Copy that line into your `.env` — the
-production guard (`app/config.py`) accepts digests and full semver tags
+The release workflow (`.github/workflows/release.yml`) refuses to publish unless
+the tag equals `v` + the version in `pyproject.toml`, and it writes the digest and
+the ready-to-paste `AGENTCMS_IMAGE_TAG=…` line into the run summary **and** the
+bottom of the GitHub release notes. Its `boot the published image` job then deploys
+that exact digest through `scripts/selfhost_e2e.sh`, so the artifact self-hosters
+pull is the artifact that was booted and exercised here.
+
+Refreshing this pin at the next release: cut the tag, wait for the run to go green,
+copy the new `pin this` line from the release notes into the docs and your `.env`.
+Rollback: set `AGENTCMS_IMAGE_TAG` back to the previous digest, run the `migrate`
+service, restart (see `docs/ops/runbook.md` §Upgrade).
+
+The production guard (`app/config.py`) accepts digests and full semver tags
 (`v0.3.1`), but rejects `latest`, `local`, `dev`, or major.minor-only tags.
 
 If you prefer to build locally, `make docker-build` / `scripts/selfhost.sh`
 still work; they tag `agentcms:v0.3.1` from `pyproject.toml` which the guard
 also accepts.
+
+> **Package visibility (open)**: the GHCR package is not public yet, so an anonymous
+> `docker pull` returns `401 Unauthorized`. Until that is flipped, authenticate first
+> (`docker login ghcr.io` with a token carrying `read:packages`). Tracked in #38.
 
 ## 10. Known gaps at this revision
 
