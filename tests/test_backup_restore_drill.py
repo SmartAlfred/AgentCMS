@@ -271,6 +271,7 @@ def _local_server_options(port: int, sockdir: Path) -> str:
     )
 
 
+@contextlib.contextmanager
 def _postgres_server_inner(db_name: str):
     """Start a throwaway PostgreSQL server (external, Docker, or local initdb) for the drill."""
     # Strategy 1: Use TEST_DATABASE_URL if provided (CI service container)
