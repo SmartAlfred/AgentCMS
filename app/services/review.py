@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.domain.errors import (
     DomainError,
@@ -180,7 +180,7 @@ def approve_review(
 
     if review.status == "approved":
         # Idempotent — already approved
-        post = session.query(Post).filter(Post.id == review.post_id).first()
+        post = session.query(Post).options(joinedload(Post.site)).filter(Post.id == review.post_id).first()
         assert post is not None
         return review, post
 
@@ -196,7 +196,7 @@ def approve_review(
     session.flush()
 
     # Publish the post
-    post = session.query(Post).filter(Post.id == review.post_id).first()
+    post = session.query(Post).options(joinedload(Post.site)).filter(Post.id == review.post_id).first()
     assert post is not None
 
     post.status = "published"

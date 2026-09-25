@@ -151,7 +151,7 @@ def _require_post(db: Any, identifier: str, site_id: Any = None) -> Any:
     """Get post by ID or slug, optionally scoped to site."""
     from app.services.post import _resolve_post
 
-    return _resolve_post(db, identifier, site_id=site_id)
+    return _resolve_post(db, identifier, site_id=site_id, load_site=True)
 
 
 def _format_post_response(post: Any, site_slug: str, db: Any, format: str = "json") -> dict[str, Any]:

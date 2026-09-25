@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.domain.errors import (
     ContentPolicyBlockedError,
@@ -157,7 +157,9 @@ def _resolve_site(session: Session, site_slug: str) -> Site:
     return session.query(Site).filter(Site.slug == site_slug).one()
 
 
-def _resolve_post(session: Session, identifier: str, *, site_id: uuid.UUID | None = None) -> Post:
+def _resolve_post(
+    session: Session, identifier: str, *, site_id: uuid.UUID | None = None, load_site: bool = False
+) -> Post:
     """Look up a post by UUID or slug, optionally scoped to a site."""
     try:
         post_id = uuid.UUID(identifier)
@@ -167,6 +169,9 @@ def _resolve_post(session: Session, identifier: str, *, site_id: uuid.UUID | Non
 
     if site_id is not None:
         query = query.filter(Post.site_id == site_id)
+
+    if load_site:
+        query = query.options(joinedload(Post.site))
 
     post = query.first()
     if post is None:
@@ -418,7 +423,7 @@ def get_post(session: Session, identifier: str, *, site_slug: str | None = None)
     if site_slug:
         site = _resolve_site(session, site_slug)
         site_id = site.id
-    return _resolve_post(session, identifier, site_id=site_id)
+    return _resolve_post(session, identifier, site_id=site_id, load_site=True)
 
 
 def list_posts(
@@ -533,7 +538,7 @@ def update_post(
     """Partially update a post.  Creates a revision snapshot.
     Returns ``(post, warnings)`` where warnings include markdown normalisation notes.
     """
-    post = _resolve_post(session, post_id)
+    post = _resolve_post(session, post_id, load_site=True)
     warnings: list[str] = []
 
     if post.status == "trashed":
@@ -838,7 +843,7 @@ def unpublish_post(
     audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Unpublish a published post (back to draft)."""
-    post = _resolve_post(session, post_id)
+    post = _resolve_post(session, post_id, load_site=True)
     warnings: list[str] = []
 
     if post.status != "published":
@@ -918,7 +923,7 @@ def trash_post(
     audit_ctx: dict[str, Any] | None = None,
 ) -> Post:
     """Soft-delete a post (status=trashed, deleted_at=now)."""
-    post = _resolve_post(session, post_id)
+    post = _resolve_post(session, post_id, load_site=True)
 
     if post.status == "trashed":
         return post  # already trashed
@@ -994,7 +999,7 @@ def restore_post(
     audit_ctx: dict[str, Any] | None = None,
 ) -> tuple[Post, list[str]]:
     """Restore a trashed post back to draft status."""
-    post = _resolve_post(session, post_id)
+    post = _resolve_post(session, post_id, load_site=True)
     warnings: list[str] = []
 
     if post.status != "trashed":
@@ -1164,7 +1169,7 @@ def revert_post(
     Creates a **new** revision whose content equals the target revision.
     History is never rewritten.
     """
-    post = _resolve_post(session, post_id)
+    post = _resolve_post(session, post_id, load_site=True)
 
     target = (
         session.query(PostRevision)

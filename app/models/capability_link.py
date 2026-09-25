@@ -42,4 +42,4 @@ class CapabilityLink(Base):
     ip_allowlist: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
-    actor = relationship("Actor", back_populates="capability_links", lazy="noload")
+    actor = relationship("Actor", back_populates="capability_links", lazy="raise")

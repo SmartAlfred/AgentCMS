@@ -6,12 +6,17 @@ Covers all acceptance criteria:
 - Soft delete (status trashed + deleted_at) never destroys revisions
 - Slug collision at insert raises a typed domain error with suggested_slug
 - Seed script creates demo site + 3 posts + 1 token
+- ORM configuration emits no SADeprecationWarning (regression test for #43)
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import uuid
+import warnings
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -24,8 +29,8 @@ from app.models.redirect import Redirect
 from app.models.site import Site
 from app.models.tag import PostTag, Tag
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, SADeprecationWarning
+from sqlalchemy.orm import Session, configure_mappers
 
 from tests import pg as pg_mod
 
@@ -378,3 +383,71 @@ class TestIndexes:
             text("SELECT indexname FROM pg_indexes WHERE tablename = 'tags' AND indexname = 'ix_tags_slug'")
         )
         assert result.fetchone() is not None
+
+
+# ---------------------------------------------------------------------------
+# Regression test for #43: ORM configuration emits no SADeprecationWarning
+# ---------------------------------------------------------------------------
+
+
+class TestORMConfiguration:
+    """Ensure ORM mapper configuration does not emit deprecation warnings.
+
+    This catches future SQLAlchemy upgrades that deprecate/remove features
+    we depend on (e.g., the ``noload`` loader strategy removed in 2.1).
+    """
+
+    def test_no_sa_deprecation_warning_on_configure_mappers(self) -> None:
+        """configure_mappers() must not emit SADeprecationWarning.
+
+        If this test fails, a SQLAlchemy upgrade has deprecated something
+        in our model configuration. Fix the model definitions instead of
+        suppressing the warning.
+        """
+        # Capture warnings during mapper configuration
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always", category=SADeprecationWarning)
+            configure_mappers()
+
+            # Filter for SADeprecationWarning
+            sa_warnings = [x for x in w if issubclass(x.category, SADeprecationWarning)]
+
+            assert not sa_warnings, (
+                f"configure_mappers() emitted {len(sa_warnings)} SADeprecationWarning(s):\n"
+                + "\n".join(f"  - {x.message}" for x in sa_warnings)
+            )
+
+    def test_a_cold_interpreter_configures_the_mappers_without_deprecations(self) -> None:
+        """The same guard, from a cold interpreter -- where the warning actually fires.
+
+        ``SADeprecationWarning`` is emitted once, at first mapper configuration, so the
+        in-process ``configure_mappers()`` above is a no-op in any process that already
+        queried (pytest collects this file after 800 other tests).  ``-W error`` on the
+        category turns the regression (``lazy="noload"`` on SQLAlchemy 2.1, #43) into a
+        non-zero exit here; an interpreter is cheap and this cannot pass vacuously.
+        """
+        # NB: `-W error::sqlalchemy.exc.SADeprecationWarning` is *silently ignored*
+        # ("Invalid -W option ignored: invalid module name") -- Python's filter syntax has
+        # no dotted module part.  Install the filter inside the child instead, and assert
+        # the child really ran the configuration (a guard that cannot fail is not a guard).
+        program = (
+            "import sys, warnings, sqlalchemy.exc;"
+            "sys.meta_path[:] = [f for f in sys.meta_path if 'Editable' not in type(f).__name__];"
+            "warnings.simplefilter('error', sqlalchemy.exc.SADeprecationWarning);"
+            "import app.models;"
+            "from sqlalchemy.orm import configure_mappers;"
+            "configure_mappers();"
+            "print('mappers configured clean')"
+        )
+        repo_root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, (
+            f"mapper configuration is deprecated under this SQLAlchemy:\n{completed.stderr.strip()[-1500:]}"
+        )
+        assert "mappers configured clean" in completed.stdout

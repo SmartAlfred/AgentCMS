@@ -34,5 +34,5 @@ class Actor(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
     # relationships
-    site = relationship("Site", back_populates="actors", lazy="noload")
-    capability_links = relationship("CapabilityLink", back_populates="actor", lazy="noload")
+    site = relationship("Site", back_populates="actors", lazy="raise")
+    capability_links = relationship("CapabilityLink", back_populates="actor", lazy="raise")

@@ -28,7 +28,7 @@ class Webhook(Base):
     active: Mapped[bool] = mapped_column(nullable=False, server_default="true")
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
-    deliveries = relationship("WebhookDelivery", back_populates="webhook", lazy="noload")
+    deliveries = relationship("WebhookDelivery", back_populates="webhook", lazy="raise")
 
 
 class WebhookDelivery(Base):
@@ -49,4 +49,4 @@ class WebhookDelivery(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
-    webhook = relationship("Webhook", back_populates="deliveries", lazy="noload")
+    webhook = relationship("Webhook", back_populates="deliveries", lazy="raise")

@@ -67,4 +67,4 @@ class ModerationDecision(Base):
 
     # relationships
     post = relationship("Post", foreign_keys=[post_id], lazy="selectin")
-    matched_post = relationship("Post", foreign_keys=[matched_post_id], lazy="noload")
+    matched_post = relationship("Post", foreign_keys=[matched_post_id], lazy="raise")

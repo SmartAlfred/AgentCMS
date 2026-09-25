@@ -87,7 +87,7 @@ class Post(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # relationships
-    site = relationship("Site", back_populates="posts", lazy="noload")
+    site = relationship("Site", back_populates="posts", lazy="raise")
     revisions = relationship(
         "PostRevision", back_populates="post", lazy="selectin", order_by="PostRevision.revision.desc()"
     )
@@ -95,7 +95,7 @@ class Post(Base):
     review = relationship(
         "Review",
         back_populates="post",
-        lazy="noload",
+        lazy="raise",
         uselist=False,
         foreign_keys="[Review.post_id]",
         primaryjoin="Post.id == Review.post_id",

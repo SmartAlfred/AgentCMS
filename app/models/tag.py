@@ -24,7 +24,7 @@ class Tag(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
-    post_links = relationship("PostTag", back_populates="tag", lazy="noload")
+    post_links = relationship("PostTag", back_populates="tag", lazy="raise")
 
 
 class PostTag(Base):

@@ -53,10 +53,10 @@ class Review(Base):
     post = relationship(
         "Post",
         back_populates="review",
-        lazy="noload",
+        lazy="raise",
         foreign_keys="[Review.post_id]",
         primaryjoin="Review.post_id == Post.id",
     )
-    site = relationship("Site", lazy="noload")
-    requested_by = relationship("Actor", foreign_keys=[requested_by_actor_id], lazy="noload")
-    reviewed_by = relationship("Actor", foreign_keys=[reviewed_by_actor_id], lazy="noload")
+    site = relationship("Site", lazy="raise")
+    requested_by = relationship("Actor", foreign_keys=[requested_by_actor_id], lazy="raise")
+    reviewed_by = relationship("Actor", foreign_keys=[reviewed_by_actor_id], lazy="raise")

@@ -39,4 +39,4 @@ class PostRevision(Base):
     diff_unified: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # relationships
-    post = relationship("Post", back_populates="revisions", lazy="noload")
+    post = relationship("Post", back_populates="revisions", lazy="raise")

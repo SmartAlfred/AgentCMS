@@ -35,5 +35,5 @@ class Site(Base):
 
     # relationships
     posts = relationship("Post", back_populates="site", lazy="selectin")
-    actors = relationship("Actor", back_populates="site", lazy="noload")
-    content_policies = relationship("ContentPolicy", back_populates="site", lazy="noload")
+    actors = relationship("Actor", back_populates="site", lazy="raise")
+    content_policies = relationship("ContentPolicy", back_populates="site", lazy="raise")
