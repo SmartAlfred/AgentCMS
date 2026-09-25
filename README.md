@@ -21,7 +21,7 @@ Two things live in this repository:
 
 ## Deploy it in 5 minutes
 
-> **TL;DR**: `git clone → cp deploy/.env.example .env → docker compose -f deploy/compose/docker-compose.prod.yml up -d → open HTTPS URL → grab capability token → embed in your site.`
+> **TL;DR**: `git clone → make selfhost → open HTTPS URL → grab capability token → embed in your site.`
 
 ### Choose Your Path
 
@@ -35,26 +35,33 @@ Two things live in this repository:
 > **All paths use the exact same Docker image and compose stack.** The only
 > difference is how the container runs and how TLS is terminated.
 
+> **Verified at this revision:** only **Path 1 (Docker Compose)** is proven
+> end-to-end. Paths 2–4 are written from intent, not from a run: their platform
+> manifests are missing and they never set `AGENTCMS_IMAGE_TAG`, so they cannot
+> boot as written — see #36. Compose-path gaps: #35, #37, #38, #39.
+
 ### Path 1: Docker Compose on a VM (Recommended Default)
 
 **Prerequisites**: A Linux VM (Ubuntu 22.04+/24.04) with Docker installed, a domain pointed at it.
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-org/agentcms.git
-cd agentcms
+git clone https://github.com/SmartAlfred/AgentCMS.git
+cd AgentCMS
 
-# 2. Configure
-cp deploy/.env.example .env
-# Edit .env: set SECRET_KEY, POSTGRES_PASSWORD, DOMAIN, CADDY_EMAIL
-# Generate SECRET_KEY: python -c "import secrets; print(secrets.token_urlsafe(48))"
+# 2. Configure + deploy in one step: writes .env with generated secrets,
+#    validates the stack, builds the image and starts it (safe to re-run)
+make selfhost DOMAIN=your-domain.com CADDY_EMAIL=you@example.com
 
-# 3. Deploy
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
-
-# 4. Verify
+# 3. Verify
 curl https://your-domain.com/healthz
 # {"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
+
+# By hand instead? cp deploy/.env.example .env, edit SECRET_KEY, POSTGRES_PASSWORD
+# and AGENTCMS_IMAGE_TAG (required in production), then:
+#   docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build --build
+# The explicit --env-file matters: compose reads .env from the directory of the
+# compose file it is given, never from your current directory (#35).
 ```
 
 **Full guide**: [docs/deploy/quickstart.md#path-1-docker-compose-on-a-vm](docs/deploy/quickstart.md#path-1-docker-compose-on-a-vm)
@@ -63,8 +70,8 @@ curl https://your-domain.com/healthz
 
 ```bash
 # Prerequisites: flyctl installed, Fly account
-git clone https://github.com/your-org/agentcms.git
-cd agentcms
+git clone https://github.com/SmartAlfred/AgentCMS.git
+cd AgentCMS
 
 # Create apps & volumes
 fly volumes create pgdata --size 3 --region ord --app agentcms-db

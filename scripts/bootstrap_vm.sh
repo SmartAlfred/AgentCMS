@@ -98,7 +98,7 @@ fi
 log_info "Generating secrets and configuring .env..."
 
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
-POSTGRES_PASSWORD=$(openssl rand -base64 32)
+POSTGRES_PASSWORD=$(openssl rand -hex 24)  # hex: it is interpolated into DATABASE_URL
 METRICS_TOKEN=$(openssl rand -base64 32)
 BACKUP_PASSPHRASE=$(openssl rand -base64 32)
 
@@ -172,13 +172,16 @@ EOF
 
 log_info ".env created with generated secrets"
 
+# Fill anything left blank/unsafe (AGENTCMS_IMAGE_TAG is required in production).
+./scripts/selfhost.sh --setup-only --env-file .env
+
 # 4. Create backup directory
 mkdir -p /opt/agentcms/backups
 chown -R 10001:10001 /opt/agentcms/backups 2>/dev/null || true
 
 # 5. Deploy
 log_info "Starting AgentCMS stack..."
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
 
 # 6. Wait for health
 log_info "Waiting for services to become healthy..."
@@ -191,7 +194,7 @@ for i in {1..30}; do
     fi
     if [[ $i -eq 30 ]]; then
         log_error "API did not become healthy in time"
-        docker compose -f deploy/compose/docker-compose.prod.yml logs --tail=50
+        docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml logs --tail=50
         exit 1
     fi
     sleep 2
@@ -241,5 +244,5 @@ log_info "     ></script>"
 log_info "     <div id=\"cms\"></div>"
 log_info ""
 log_info "Configuration: $INSTALL_DIR/.env"
-log_info "Logs: docker compose -f deploy/compose/docker-compose.prod.yml logs -f"
-log_info "Update: cd $INSTALL_DIR && git pull && docker compose -f deploy/compose/docker-compose.prod.yml up -d --build"
+log_info "Logs: docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml logs -f"
+log_info "Update: cd $INSTALL_DIR && git pull && docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build"

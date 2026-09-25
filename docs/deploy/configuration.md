@@ -202,7 +202,7 @@ For local development, copy `deploy/.env.example` to `.env` and adjust:
 ```bash
 cp deploy/.env.example .env
 # Edit .env: set SECRET_KEY to dev value, DOMAIN=localhost, etc.
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
 ```
 
 The dev defaults in `.env.example` work with the compose stack as-is for a

@@ -90,7 +90,7 @@ parse without them):
 
 ```text
 $ APP_ENV=production SECRET_KEY=prod-test-secret-key-0123456789abcdef0123456789abcdef \
-    POSTGRES_PASSWORD='ci-prod-password' TAG=agentcms:deploy \
+    POSTGRES_PASSWORD='ci-prod-password' AGENTCMS_IMAGE_TAG=agentcms:v0.3.0 \
     docker compose -f compose.prod.yml up -d --build
  Container agentcms-prod-db-1 Waiting
  Container agentcms-prod-db-1 Healthy

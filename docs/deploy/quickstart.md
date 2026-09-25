@@ -1,6 +1,6 @@
 # Deploy AgentCMS in 5 Minutes
 
-> **TL;DR**: `git clone → cp deploy/.env.example .env → docker compose -f deploy/compose/docker-compose.prod.yml up -d → open HTTPS URL → grab capability token → embed in your site.`
+> **TL;DR**: `git clone → make selfhost → open HTTPS URL → grab capability token → embed in your site.`
 
 This guide gets you a production-ready AgentCMS instance with HTTPS, a database,
 automatic migrations, and an embed script — in about 5 minutes.
@@ -17,6 +17,11 @@ automatic migrations, and an embed script — in about 5 minutes.
 > **All paths use the exact same Docker image and compose stack.** The only
 > difference is how the container runs and how TLS is terminated.
 
+> **Verified at this revision:** only **Path 1 (Docker Compose)** is proven
+> end-to-end. Paths 2–4 are written from intent, not from a run: their platform
+> manifests are missing and they never set `AGENTCMS_IMAGE_TAG`, so they cannot
+> boot as written — see #36. Compose-path gaps: #35, #37, #38, #39.
+
 ---
 
 ## Path 1: Docker Compose on a VM (Recommended Default)
@@ -25,20 +30,22 @@ automatic migrations, and an embed script — in about 5 minutes.
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-org/agentcms.git
-cd agentcms
+git clone https://github.com/SmartAlfred/AgentCMS.git
+cd AgentCMS
 
-# 2. Configure
-cp deploy/.env.example .env
-# Edit .env: set SECRET_KEY, POSTGRES_PASSWORD, DOMAIN, CADDY_EMAIL
-# Generate SECRET_KEY: python -c "import secrets; print(secrets.token_urlsafe(48))"
+# 2. Configure + deploy in one step: writes .env with generated secrets,
+#    validates the stack, builds the image and starts it (safe to re-run)
+make selfhost DOMAIN=your-domain.com CADDY_EMAIL=you@example.com
 
-# 3. Deploy
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
-
-# 4. Verify
+# 3. Verify
 curl https://your-domain.com/healthz
 # {"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
+
+# By hand instead? cp deploy/.env.example .env, edit SECRET_KEY, POSTGRES_PASSWORD
+# and AGENTCMS_IMAGE_TAG (required in production), then:
+#   docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build --build
+# The explicit --env-file matters: compose reads .env from the directory of the
+# compose file it is given, never from your current directory (#35).
 ```
 
 **Full guide**: [deploy/vm/quickstart.md](deploy/vm/quickstart.md)
@@ -51,8 +58,8 @@ curl https://your-domain.com/healthz
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-org/agentcms.git
-cd agentcms
+git clone https://github.com/SmartAlfred/AgentCMS.git
+cd AgentCMS
 
 # 2. Create apps & volumes
 fly volumes create pgdata --size 3 --region ord --app agentcms-db
@@ -61,6 +68,8 @@ fly apps create agentcms-api
 
 # 3. Set secrets (API app)
 fly secrets set SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" --app agentcms-api
+# Required: with APP_ENV=production the app refuses to boot without an immutable tag
+fly secrets set AGENTCMS_IMAGE_TAG="agentcms:v0.3.0" --app agentcms-api
 fly secrets set POSTGRES_PASSWORD="your-db-password" --app agentcms-api
 fly secrets set DATABASE_URL="postgresql+psycopg://agentcms:your-db-password@agentcms-db.internal:5432/agentcms" --app agentcms-api
 fly secrets set EMBED_ORIGINS="https://your-frontend.com" --app agentcms-api
@@ -204,7 +213,7 @@ For local testing without a domain, the stack works with self-signed certs:
 ```bash
 cp deploy/.env.example .env
 # Edit .env: DOMAIN=localhost (default), CADDY_EMAIL= (empty)
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
 # Open https://localhost (browser will warn about self-signed cert)
 ```
 

@@ -124,6 +124,14 @@ check-doc-urls: install ## Check documented live URLs return 2xx
 	$(PY) -m scripts.check_doc_urls --fail-fast
 
 
+.PHONY: selfhost
+selfhost: ## Self-host the production stack: generate .env, validate, build, start
+	./scripts/selfhost.sh
+
+.PHONY: selfhost-setup
+selfhost-setup: ## Only write/refresh the production .env (no Docker needed)
+	./scripts/selfhost.sh --setup-only
+
 .PHONY: gate
 gate: lint test check-doc-urls ## CI gate: lint + test + doc URL check
 

@@ -60,7 +60,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 # 2. Clone repo
-git clone https://github.com/your-org/agentcms.git /opt/agentcms
+git clone https://github.com/SmartAlfred/AgentCMS.git /opt/agentcms
 cd /opt/agentcms
 
 # 3. Configure environment
@@ -68,7 +68,7 @@ cp deploy/.env.example .env
 # Edit .env with your values (see step 4)
 
 # 4. Deploy
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
 ```
 
 ## 3. Configure Environment (`.env`)
@@ -149,13 +149,13 @@ EOF
 
 ```bash
 cd /opt/agentcms
-docker compose -f deploy/compose/docker-compose.prod.yml up -d
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
 ```
 
 Watch the logs:
 
 ```bash
-docker compose -f deploy/compose/docker-compose.prod.yml logs -f
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml logs -f
 ```
 
 Wait for:
@@ -185,7 +185,7 @@ Expected:
 The `migrate` service runs automatically on first deploy. If you need to run manually:
 
 ```bash
-docker compose -f deploy/compose/docker-compose.prod.yml run --rm migrate
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml run --rm migrate
 ```
 
 ## 7. Create a Site & Capability Token
@@ -245,8 +245,8 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/agentcms
-ExecStart=/usr/bin/docker compose -f deploy/compose/docker-compose.prod.yml up -d
-ExecStop=/usr/bin/docker compose -f deploy/compose/docker-compose.prod.yml down
+ExecStart=/usr/bin/docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d --build
+ExecStop=/usr/bin/docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml down
 TimeoutStartSec=300
 
 [Install]
@@ -266,10 +266,10 @@ Add to root's crontab (`sudo crontab -e`):
 
 ```bash
 # Daily backup at 03:00
-0 3 * * * cd /opt/agentcms && docker compose -f deploy/compose/docker-compose.prod.yml exec -T api python scripts/backup.py >> /var/log/agentcms-backup.log 2>&1
+0 3 * * * cd /opt/agentcms && docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml exec -T api python scripts/backup.py >> /var/log/agentcms-backup.log 2>&1
 
 # Monthly restore drill on 1st at 04:00
-0 4 1 * * cd /opt/agentcms && docker compose -f deploy/compose/docker-compose.prod.yml exec -T api python scripts/restore_drill.py >> /var/log/agentcms-restore-drill.log 2>&1
+0 4 1 * * cd /opt/agentcms && docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml exec -T api python scripts/restore_drill.py >> /var/log/agentcms-restore-drill.log 2>&1
 ```
 
 ## 11. Log Rotation

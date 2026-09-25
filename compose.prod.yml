@@ -2,11 +2,13 @@
 # no host-exposed DB port.  The `migrate` service is the one-shot job the
 # deploy script runs before a rolling update (#24).
 #   docker compose -f compose.prod.yml up
-# Requires SECRET_KEY, POSTGRES_PASSWORD, and AGENTCMS_IMAGE_TAG in the
-# environment or .env.  AGENTCMS_IMAGE_TAG must be an immutable version tag
-# or digest (e.g. ghcr.io/owner/agentcms:v0.3.1 or
-# ghcr.io/owner/agentcms@sha256:abc123...).  Mutable tags (latest, local, dev,
-# major.minor) are rejected at startup.
+# Requires SECRET_KEY and POSTGRES_PASSWORD in the environment or .env.
+#
+# AGENTCMS_IMAGE_TAG is REQUIRED by the app at startup when APP_ENV=production
+# and must be an immutable version tag or digest (ghcr.io/owner/agentcms:v0.3.1,
+# ...@sha256:abc123..., or a semver tag for a build-from-source run).  Compose
+# interpolation deliberately does NOT hard-fail when it is unset, so a clean
+# checkout can run `docker compose config`; the app fails closed instead (#35).
 name: agentcms-prod
 
 services:
@@ -37,7 +39,7 @@ services:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
-      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:?set AGENTCMS_IMAGE_TAG in the environment}
+      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:-}
     depends_on:
       db:
         condition: service_healthy
@@ -51,22 +53,22 @@ services:
       APP_ENV: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentcms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agentcms}
-      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:?set AGENTCMS_IMAGE_TAG in the environment}
+      AGENTCMS_IMAGE_TAG: ${AGENTCMS_IMAGE_TAG:-}
       HOST: 0.0.0.0
       PORT: "8000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
-      METRICS_TOKEN: ${METRICS_TOKEN}
-      OTLP_ENDPOINT: ${OTLP_ENDPOINT}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-agentcms}
       TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-0.1}
-      BACKUP_STORE_URL: ${BACKUP_STORE_URL}
-      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE}
+      BACKUP_STORE_URL: ${BACKUP_STORE_URL:-}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:-}
       BACKUP_RETENTION_DAILY: ${BACKUP_RETENTION_DAILY:-30}
       BACKUP_RETENTION_MONTHLY: ${BACKUP_RETENTION_MONTHLY:-12}
-      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-agentcms-media}
       S3_REGION: ${S3_REGION:-us-east-1}
     ports:
