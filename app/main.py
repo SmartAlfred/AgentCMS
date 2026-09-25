@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
@@ -166,6 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 def register_v1_routes(app: FastAPI) -> None:
     """Mount the versioned content API (implemented in #4, #5, #6)."""
 
+    from app.api.admin_auth import require_admin
     from app.api.admin_rate_limits import router as admin_rl_router
     from app.api.media import router as media_router
     from app.api.v1.capability_links import router as cap_router
@@ -173,7 +174,7 @@ def register_v1_routes(app: FastAPI) -> None:
 
     app.include_router(v1_router, prefix="/v1")
     app.include_router(media_router)
-    app.include_router(admin_rl_router)
+    app.include_router(admin_rl_router, dependencies=[Depends(require_admin)])
     app.include_router(cap_router)
 
 

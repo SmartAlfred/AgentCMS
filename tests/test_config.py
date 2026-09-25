@@ -72,6 +72,7 @@ def test_production_refuses_the_dev_secret_key(monkeypatch: pytest.MonkeyPatch) 
         Settings(
             _env_file=None,
             app_env="production",
+            admin_token="y" * 40,
             database_url="postgresql+psycopg://u:p@db:5432/agentcms",
         )
     assert "SECRET_KEY" in str(excinfo.value)
@@ -82,6 +83,7 @@ def test_production_refuses_a_short_secret_key() -> None:
         Settings(
             _env_file=None,
             app_env="production",
+            admin_token="y" * 40,
             secret_key="too-short",
             database_url="postgresql+psycopg://u:p@db:5432/agentcms",
         )
@@ -102,6 +104,7 @@ def test_production_refuses_debug() -> None:
         Settings(
             _env_file=None,
             app_env="production",
+            admin_token="y" * 40,
             secret_key="x" * 40,
             database_url="postgresql+psycopg://u:p@db:5432/agentcms",
             debug=True,
@@ -113,6 +116,7 @@ def test_production_accepts_explicit_configuration() -> None:
     settings = Settings(
         _env_file=None,
         app_env="production",
+        admin_token="y" * 40,
         secret_key="x" * 40,
         database_url="postgresql+psycopg://u:p@db:5432/agentcms",
         agentcms_image_tag="ghcr.io/owner/agentcms:v0.3.1",
@@ -202,6 +206,7 @@ def test_production_refuses_missing_agentcms_image_tag() -> None:
         Settings(
             _env_file=None,
             app_env="production",
+            admin_token="y" * 40,
             secret_key="x" * 40,
             database_url="postgresql+psycopg://u:p@db:5432/agentcms",
             agentcms_image_tag="",
@@ -216,6 +221,7 @@ def test_production_refuses_mutable_agentcms_image_tag() -> None:
             Settings(
                 _env_file=None,
                 app_env="production",
+                admin_token="y" * 40,
                 secret_key="x" * 40,
                 database_url="postgresql+psycopg://u:p@db:5432/agentcms",
                 agentcms_image_tag=mutable_tag,
@@ -235,8 +241,37 @@ def test_production_accepts_immutable_agentcms_image_tag() -> None:
         settings = Settings(
             _env_file=None,
             app_env="production",
+            admin_token="y" * 40,
             secret_key="x" * 40,
             database_url="postgresql+psycopg://u:p@db:5432/agentcms",
             agentcms_image_tag=immutable_tag,
         )
         assert settings.agentcms_image_tag == immutable_tag
+
+
+def test_production_refuses_missing_admin_token() -> None:
+    """#44: no ADMIN_TOKEN in production means no way in — refuse to boot."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            app_env="production",
+            secret_key="x" * 40,
+            database_url="postgresql+psycopg://u:p@db:5432/agentcms",
+            agentcms_image_tag="ghcr.io/owner/agentcms:v0.3.1",
+            admin_token="",
+        )
+    assert "ADMIN_TOKEN is required in production" in str(excinfo.value)
+
+
+def test_production_refuses_a_short_admin_token() -> None:
+    """A 31-character bootstrap secret is a guessable one: refuse it."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            app_env="production",
+            secret_key="x" * 40,
+            database_url="postgresql+psycopg://u:p@db:5432/agentcms",
+            agentcms_image_tag="ghcr.io/owner/agentcms:v0.3.1",
+            admin_token="too-short",
+        )
+    assert "ADMIN_TOKEN must be at least 32 characters" in str(excinfo.value)

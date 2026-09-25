@@ -78,6 +78,13 @@ set_value() { # name value — replace the line, or append it if absent
 }
 
 # Secrets: generate whenever blank or still an insecure development value.
+# ADMIN_TOKEN gates the whole /v1/admin/* surface and is [prod-required] (#44).
+admin_token="$(value_of ADMIN_TOKEN)"
+if [ -z "$admin_token" ] || [ "${#admin_token}" -lt 32 ]; then
+  command -v python3 >/dev/null || die "python3 is required to generate ADMIN_TOKEN"
+  set_value ADMIN_TOKEN "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+fi
+
 secret_key="$(value_of SECRET_KEY)"
 if [ -z "$secret_key" ] || [ "$secret_key" = "$DEV_SECRET" ] || [ "${#secret_key}" -lt 32 ]; then
   command -v python3 >/dev/null || die "python3 is required to generate SECRET_KEY"

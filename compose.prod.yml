@@ -60,6 +60,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      # #44: bootstrap secret for /v1/admin/*. Compose fails fast when it is
+      # unset, matching the service's own production boot guard.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       OTLP_ENDPOINT: ${OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-agentcms}
       TRACE_SAMPLE_RATIO: ${TRACE_SAMPLE_RATIO:-0.1}

@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     # Shared secret required on GET /metrics (admin-auth).  Empty = metrics
     # served to any authenticated admin token; never expose /metrics publicly.
     metrics_token: str = ""
+    # Bootstrap secret for the whole /v1/admin/* surface (#44), sent as the
+    # `X-Admin-Token` header.  [prod-required] In production the service
+    # refuses to boot while it is unset or shorter than 32 characters: with no
+    # ADMIN_TOKEN nobody can mint the first token, and an admin surface that
+    # fails open is a token-minting back door.  The human dashboard
+    # authenticates with its session cookie instead of this secret.
+    admin_token: str = ""
     # Base URL of the OTLP endpoint (e.g. http://jaeger:4318).  Empty =
     # tracing is soft-disabled (no export), which keeps the hot path cheap.
     otlp_endpoint: str = ""
@@ -215,6 +222,13 @@ class Settings(BaseSettings):
                 "AGENTCMS_IMAGE_TAG must be an immutable version tag or digest "
                 f"(got '{self.agentcms_image_tag}')"
             )
+        if not self.admin_token:
+            problems.append(
+                "ADMIN_TOKEN is required in production; generate one with "
+                'python -c "import secrets; print(secrets.token_urlsafe(32))"'
+            )
+        elif len(self.admin_token) < 32:
+            problems.append("ADMIN_TOKEN must be at least 32 characters")
         if problems:
             raise ValueError("refusing to start in production: " + "; ".join(problems))
         return self
