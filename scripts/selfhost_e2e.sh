@@ -200,15 +200,17 @@ if ! seed_out="$(compose exec -T api python -m scripts.seed)"; then
 fi
 printf '%s\n' "$seed_out" | sed 's/^/    /'
 site_slug="$(printf '%s\n' "$seed_out" | sed -n 's|.*Demo site: */v1/sites/\([A-Za-z0-9_-]*\).*|\1|p' | head -1)"
-cap_token="$(printf '%s\n' "$seed_out" | grep -oE 'cap_[A-Za-z0-9_]+' | head -1)"
+cap_token="$(printf '%s\n' "$seed_out" | sed -n 's/.*Capability token: *//p' | head -1 | tr -d '\r' | awk '{print $1}')"
+embed_token="$(printf '%s\n' "$seed_out" | sed -n 's/.*Embed token: *//p' | head -1 | tr -d '\r' | awk '{print $1}')"
 [ -n "$site_slug" ] || die "could not read the seeded site slug from scripts/seed.py output"
 [ -n "$cap_token" ] || die "scripts/seed.py did not print a capability token (see #44)"
+[ -n "$embed_token" ] || die "scripts/seed.py did not print a read-only embed token (GET /embed/v1/posts rejects the write token)"
 
 # --- 7. API roundtrip: capability link -> publish post -> public page ---------
 
-log "API roundtrip (minted capability link -> publish post -> public page)"
+log "API roundtrip (minted capability link -> publish post -> public page -> read-only embed token)"
 ./scripts/deploy_smoke.sh --base-url "$BASE_URL" --compose-file "$COMPOSE_FILE" --max-wait "$TIMEOUT" \
-  --site-slug "$site_slug" --capability-token "$cap_token" \
+  --site-slug "$site_slug" --capability-token "$cap_token" --embed-token "$embed_token" \
   || die "the API roundtrip failed (see [SMOKE] output above)"
 
 log "SELF-HOST E2E PASSED — the documented path deploys and serves content"

@@ -28,7 +28,7 @@ def _counts(db: Session) -> dict[str, int]:
 
 
 def test_seed_token_verifies_with_the_real_capability_service(db: Session) -> None:
-    token = seed()
+    token = seed().write_token
 
     assert token.startswith("cap_blog_"), f"seeded token has the pre-#6 shape: {token!r}"
 
@@ -47,7 +47,7 @@ def test_seed_token_verifies_with_the_real_capability_service(db: Session) -> No
 def test_seeded_token_is_accepted_by_the_instruction_sheet_and_write_path(
     db: Session, client: TestClient
 ) -> None:
-    token = seed()
+    token = seed().write_token
 
     sheet = client.get(f"/c/{token}")
     assert sheet.status_code == 200, sheet.text
@@ -57,17 +57,49 @@ def test_seeded_token_is_accepted_by_the_instruction_sheet_and_write_path(
     assert created.json()["status"] == "draft"
 
 
-def test_seed_is_idempotent_and_refreshes_the_demo_link(db: Session) -> None:
+def test_seed_is_idempotent_and_refreshes_the_demo_links(db: Session) -> None:
+    # Two links on purpose: the write/publish link and the read-only embed link.
     first = seed()
     before = _counts(db)
 
     second = seed()
     after = _counts(db)
 
-    assert before == after == {"sites": 1, "actors": 1, "links": 1, "posts": 3}
-    assert second != first, "a re-run should mint a fresh token"
+    assert before == after == {"sites": 1, "actors": 1, "links": 2, "posts": 3}
+    assert second.write_token != first.write_token, "a re-run should mint a fresh token"
+    assert second.embed_token != first.embed_token, "a re-run should refresh the embed link too"
     # The refreshed token works and the old one no longer resolves.
-    verify_capability_token(db, second, required_verb="posts:write", required_site_slug="blog")
+    verify_capability_token(db, second.write_token, required_verb="posts:write", required_site_slug="blog")
     assert (
-        db.scalar(select(CapabilityLink).where(CapabilityLink.token_hash == first.split("_", 2)[-1])) is None
+        db.scalar(
+            select(CapabilityLink).where(CapabilityLink.token_hash == first.write_token.split("_", 2)[-1])
+        )
+        is None
     )
+
+
+def test_seeded_embed_token_is_read_only_and_the_write_token_is_rejected(
+    db: Session, client: TestClient
+) -> None:
+    """``make seed`` must mint a second, read-only link for embedding.
+
+    The embed surface rejects any token carrying write verbs, so a single
+    write-capable token (the pre-fix behaviour) made the documented embed setup and
+    the self-host E2E's final assertion fail with 403 on a perfectly healthy stack --
+    which is how the self-host E2E job went red on 2026-09-25.
+    """
+    result = seed()
+
+    embed = client.get(f"/embed/v1/posts?token={result.embed_token}&limit=10")
+    assert embed.status_code == 200, embed.text
+    assert embed.json()["posts"], "the seeded published post must come back"
+
+    write = client.get(f"/embed/v1/posts?token={result.write_token}&limit=10")
+    assert write.status_code == 403, write.text
+    assert "read-only" in write.json().get("detail", "").lower()
+
+    # The documented way to reach the embed link is the printed "Embed token:" line.
+    _, link = verify_capability_token(
+        db, result.embed_token, required_verb="posts:read", required_site_slug="blog"
+    )
+    assert set(link.verbs or []) == {"posts:read"}, "the embed link must be read-only"

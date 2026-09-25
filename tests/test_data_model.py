@@ -294,13 +294,13 @@ class TestSoftDelete:
 
 
 class TestSeed:
-    """Seed script creates a demo site + 3 posts + 1 token."""
+    """Seed script creates a demo site + 3 posts + 2 tokens (write + read-only embed)."""
 
     def test_seed_creates_expected_data(self, db: Session) -> None:
         from scripts.seed import seed
 
-        raw_token = seed()
-        assert raw_token, "seed should return a non-empty token"
+        result = seed()
+        assert result.write_token and result.embed_token, "seed should return both tokens"
 
         with session_scope() as session:
             sites = session.execute(text("SELECT COUNT(*) FROM sites")).scalar_one()
@@ -312,7 +312,7 @@ class TestSeed:
         assert sites == 1
         assert posts == 3
         assert actors == 1
-        assert caps == 1
+        assert caps == 2
         assert revisions == 3  # one revision per post
 
 

@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import sys
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 # Ensure repo root is on sys.path so imports work when run as a module.
@@ -32,9 +34,15 @@ from app.models.post_revision import PostRevision
 from app.models.site import Site
 from app.services.capability_tokens import ALL_VERBS, generate_capability_token
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 DEMO_ACTOR_LABEL = "Demo API Token"
 DEMO_LINK_LABEL = "Demo capability link"
+EMBED_LINK_LABEL = "Demo embed link (read-only)"
+# GET /embed/v1/posts rejects any token that also carries write verbs, so the demo
+# data needs a second, read-only link: the write link can publish drafts but can
+# never be embedded.
+EMBED_VERBS: tuple[str, ...] = ("posts:read",)
 DEMO_POSTS: list[dict[str, str]] = [
     {
         "slug": "hello-world",
@@ -57,11 +65,60 @@ DEMO_POSTS: list[dict[str, str]] = [
 ]
 
 
-def seed() -> str:
-    """Run the seed.  Returns the raw capability token for the caller to display.
+@dataclass(frozen=True)
+class SeedResult:
+    """The capability tokens ``make seed`` prints, each with a different job.
+
+    ``write_token`` carries posts:read/write/publish and drives ``/c/{token}``.
+    ``embed_token`` is read-only on purpose: ``GET /embed/v1/posts`` rejects any
+    token that also carries write verbs, so it cannot be the same token.
+    """
+
+    write_token: str
+    embed_token: str
+
+
+def _upsert_link(
+    session: Session,
+    *,
+    actor: Actor,
+    label: str,
+    verbs: Sequence[str],
+    slug: str,
+    path_scope: str,
+) -> str:
+    """Mint (or refresh) one capability link and return its plaintext token.
+
+    Minted with the real service helper so the plaintext is the
+    ``cap_<site_slug>_<random>`` shape that /c/{token} accepts, with
+    sha256(random + secret_key) stored at rest (#28).
+    """
+    raw_token, token_hash = generate_capability_token(slug)
+    link = session.scalar(
+        select(CapabilityLink).where(
+            CapabilityLink.actor_id == actor.id,
+            CapabilityLink.label == label,
+        )
+    )
+    if link is None:
+        link = CapabilityLink(id=uuid.uuid4(), actor_id=actor.id, label=label)
+        session.add(link)
+    link.token_hash = token_hash
+    link.site_slug = slug
+    link.path_scope = path_scope
+    link.verbs = sorted(verbs)
+    link.uses_remaining = 1000
+    link.uses_count = 0
+    link.revoked_at = None
+    link.expires_at = None
+    return raw_token
+
+
+def seed() -> SeedResult:
+    """Run the seed.  Returns the tokens for the caller to display.
 
     Idempotent: an existing demo site/actor/post is reused and the demo capability
-    link is refreshed in place, so ``make seed`` can be run repeatedly (#28).
+    links are refreshed in place, so ``make seed`` can be run repeatedly (#28).
     """
     settings = get_settings()
     slug = settings.default_site_slug
@@ -95,28 +152,25 @@ def seed() -> str:
             session.flush()
         actor.revoked_at = None
 
-        # --- capability link ------------------------------------------------------
-        # Minted with the real service helper so the plaintext is the
-        # ``cap_<site_slug>_<random>`` shape that /c/{token} accepts, with
-        # sha256(random + secret_key) stored at rest (#28).
-        raw_token, token_hash = generate_capability_token(slug)
-        link = session.scalar(
-            select(CapabilityLink).where(
-                CapabilityLink.actor_id == actor.id,
-                CapabilityLink.label == DEMO_LINK_LABEL,
-            )
+        # --- capability links -----------------------------------------------------
+        # Two links with deliberately different verbs: the write link drives the
+        # publish roundtrip, and the read-only link is what /embed/v1/posts accepts.
+        write_token = _upsert_link(
+            session,
+            actor=actor,
+            label=DEMO_LINK_LABEL,
+            verbs=sorted(ALL_VERBS),
+            slug=slug,
+            path_scope=f"/v1/sites/{slug}/posts",
         )
-        if link is None:
-            link = CapabilityLink(id=uuid.uuid4(), actor_id=actor.id, label=DEMO_LINK_LABEL)
-            session.add(link)
-        link.token_hash = token_hash
-        link.site_slug = slug
-        link.path_scope = f"/v1/sites/{slug}/posts"
-        link.verbs = sorted(ALL_VERBS)
-        link.uses_remaining = 1000
-        link.uses_count = 0
-        link.revoked_at = None
-        link.expires_at = None
+        embed_token = _upsert_link(
+            session,
+            actor=actor,
+            label=EMBED_LINK_LABEL,
+            verbs=EMBED_VERBS,
+            slug=slug,
+            path_scope="/",
+        )
 
         # --- posts ----------------------------------------------------------------
         for data in DEMO_POSTS:
@@ -149,20 +203,22 @@ def seed() -> str:
                 )
             )
 
-    return raw_token
+        return SeedResult(write_token=write_token, embed_token=embed_token)
 
 
 def main() -> None:
     """CLI entry-point."""
     reset_settings_cache()
-    token = seed()
+    result = seed()
     settings = get_settings()
     slug = settings.default_site_slug
+    write_token = result.write_token
     print(f"Seed complete for {settings.app_name}.")
     print(f"  Demo site:         /v1/sites/{slug}")
-    print(f"  Capability token:  {token}")
-    print(f"  Instruction sheet: GET  /c/{token}")
-    print(f"  Write a draft:     POST /c/{token}/posts   (no Authorization header needed)")
+    print(f"  Capability token:  {write_token}")
+    print(f"  Embed token:       {result.embed_token}   (read-only: /embed/v1/posts rejects write tokens)")
+    print(f"  Instruction sheet: GET  /c/{write_token}")
+    print(f"  Write a draft:     POST /c/{write_token}/posts   (no Authorization header needed)")
     print(f"  Public blog:       GET  /{slug}  ·  /{slug}/rss.xml  ·  /llms.txt")
 
 

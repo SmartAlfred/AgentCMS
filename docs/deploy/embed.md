@@ -38,14 +38,20 @@ The embed script needs a **read-only** capability token.
 
 **Today (until #44)**: neither the API nor the dashboard can mint a capability
 link yet -- the documented route `POST /v1/sites/{slug}/capability-links` does not
-exist, and the dashboard has no Capability Links screen. The seed script mints one
-and prints it:
+exist, and the dashboard has no Capability Links screen. The seed script mints the
+read-only link (plus a separate write link) and prints both:
 
 ```bash
 docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
   exec -T api python -m scripts.seed
-#   Capability token:  cap_blog_xxxxxxxx
+#   Capability token:  cap_blog_xxxxxxxx   <- write + publish: drives /c/{token}, NOT embeddable
+#   Embed token:       cap_blog_yyyyyyyy   <- read-only: put THIS in data-site-token
 ```
+
+Use the **Embed token** for `data-site-token`. `/embed/v1/posts` answers `403` to any
+token that also carries `posts:write`/`posts:publish` — pasting the write token is the
+most common setup mistake, and it matters: the embed token is shipped in a public
+page's HTML, so a write-capable one would hand the reader publish rights.
 
 ### 2. Configure Allowed Origins
 

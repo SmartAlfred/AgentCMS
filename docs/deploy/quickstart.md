@@ -42,11 +42,14 @@ curl https://your-domain.com/healthz
 
 # 4. Prove it serves content: liveness, readiness and a real roundtrip
 #    (publish a post through a capability link -> fetch it from the public URL).
-#    It needs an existing site and a capability token, because nothing can create
-#    a site or mint a link over the API yet (#44) -- the seed script does both:
-CAP=$(docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
-        exec -T api python -m scripts.seed | sed -n 's/.*Capability token: *//p')
-make selfhost-verify CAPABILITY_TOKEN="$CAP"
+#    It needs an existing site plus a write token and a read-only embed token,
+#    because nothing can create a site or mint a link over the API yet (#44) --
+#    the seed script does all three and prints both tokens:
+SEED=$(docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
+        exec -T api python -m scripts.seed)
+CAP=$(printf '%s\n' "$SEED" | sed -n 's/.*Capability token: *//p' | awk '{print $1}')
+EMBED=$(printf '%s\n' "$SEED" | sed -n 's/.*Embed token: *//p' | awk '{print $1}')
+SMOKE_CAPABILITY_TOKEN="$CAP" SMOKE_EMBED_TOKEN="$EMBED" make selfhost-verify
 
 # By hand instead? cp deploy/.env.example .env, edit SECRET_KEY, POSTGRES_PASSWORD
 # and AGENTCMS_IMAGE_TAG (required in production), then:

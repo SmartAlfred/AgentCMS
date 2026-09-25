@@ -7,6 +7,9 @@
 #    over HTTP yet, so scripts/selfhost_e2e.sh seeds it first)
 # 3. Uses the capability token handed in via --capability-token /
 #    SMOKE_CAPABILITY_TOKEN (#44: no API mints cap_ tokens yet; `make seed` does)
+#    plus a read-only embed token via --embed-token / SMOKE_EMBED_TOKEN:
+#    /embed/v1/posts rejects any token carrying write verbs, so the write token
+#    above can never be embedded -- `make seed` prints both.
 # 4. Creates and publishes a post via capability link
 # 5. Verifies the post appears on public read surface
 # 6. Verifies embed script is served with correct content-type
@@ -35,6 +38,7 @@ EMBED_SCRIPT_URL="${BASE_URL}/embed/v1/agentcms.js"
 MAX_WAIT="${MAX_WAIT:-180}"  # seconds
 SITE_SLUG="${SMOKE_SITE_SLUG:-blog}"
 CAP_TOKEN="${SMOKE_CAPABILITY_TOKEN:-}"
+EMBED_TOKEN="${SMOKE_EMBED_TOKEN:-}"
 POLL_INTERVAL=3
 
 # Parse args
@@ -61,6 +65,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --capability-token)
             CAP_TOKEN="$2"
+            shift 2
+            ;;
+        --embed-token)
+            EMBED_TOKEN="$2"
             shift 2
             ;;
         *)
@@ -146,6 +154,14 @@ if [[ -z "${CAP_TOKEN}" ]]; then
 fi
 log_info "Using capability token: ${CAP_TOKEN:0:20}..."
 
+if [[ -z "${EMBED_TOKEN}" ]]; then
+    log_error "No embed token: pass --embed-token <cap_...> (or set SMOKE_EMBED_TOKEN)."
+    log_error "The embed endpoint only accepts read-only tokens, so the write token cannot be used."
+    log_error "scripts/seed.py prints both: 'Capability token:' and 'Embed token:'."
+    exit 1
+fi
+log_info "Using read-only embed token: ${EMBED_TOKEN:0:20}..."
+
 # ---- 6. Create a post via capability link ----
 log_info "Creating post via capability link..."
 CREATE_RESPONSE=$(curl -s -X POST "${BASE_URL}/c/${CAP_TOKEN}/posts" \
@@ -230,8 +246,10 @@ fi
 log_info "Embed script content verified"
 
 # ---- 10. Verify embed token-scoped fetch returns the post ----
-log_info "Verifying embed /posts endpoint with token..."
-EMBED_POSTS_URL="${BASE_URL}/embed/v1/posts?token=${CAP_TOKEN}&limit=10"
+# The embed surface only accepts read-only tokens: this uses the embed token, never
+# the write token above.
+log_info "Verifying embed /posts endpoint with the read-only token..."
+EMBED_POSTS_URL="${BASE_URL}/embed/v1/posts?token=${EMBED_TOKEN}&limit=10"
 EMBED_RESPONSE=$(curl -s -H "Origin: http://localhost:3000" "${EMBED_POSTS_URL}")
 
 EMBED_POST_COUNT=$(echo "${EMBED_RESPONSE}" | jq '.posts | length')
@@ -262,6 +280,19 @@ else
     exit 1
 fi
 
+# ---- 11b. The write capability token must be rejected on the embed surface ----
+# docs/deploy/embed.md promises "write tokens rejected". With `make seed` minting both
+# links, that promise is provable here without an API that mints capability links.
+log_info "Verifying the write capability token is rejected on the embed endpoint..."
+WRITE_EMBED_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    "${BASE_URL}/embed/v1/posts?token=${CAP_TOKEN}&limit=5")
+if [[ "${WRITE_EMBED_CODE}" == "403" ]]; then
+    log_info "Write capability token correctly rejected (403)"
+else
+    log_error "Embed endpoint accepted a write-capable token (got ${WRITE_EMBED_CODE})"
+    exit 1
+fi
+
 # ---- 12. Verify CORS headers on embed endpoint ----
 log_info "Verifying CORS on embed endpoint..."
 CORS_RESPONSE=$(curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" \
@@ -285,7 +316,8 @@ log_info "  - Capability links: OK"
 log_info "  - Create + publish via link: OK"
 log_info "  - Public read surface: OK"
 log_info "  - Embed script served: OK"
-log_info "  - Embed token fetch: OK"
-log_info "  - Write token rejection: OK"
+log_info "  - Embed token fetch (read-only): OK"
+log_info "  - Write token rejected: OK"
+log_info "  - Non-capability token rejected: OK"
 log_info "  - CORS headers: OK"
 exit 0
