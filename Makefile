@@ -38,10 +38,20 @@ $(VENV)/bin/python:
 venv: $(VENV)/bin/python ## Create the virtualenv
 
 .PHONY: install
-install: venv ## Install runtime + dev dependencies into .venv
+install: venv ## Install the pinned dependency set from requirements.lock.txt
 	$(PIP) install --quiet --upgrade pip
-	$(PIP) install --quiet -e ".[dev]"
+	$(PIP) install --quiet --no-deps -r requirements.lock.txt
+	$(PIP) install --quiet --no-deps -e .
 	@test -f .env || (cp .env.example .env && echo "==> wrote .env from .env.example")
+
+.PHONY: lock
+lock: venv ## Regenerate requirements.lock.txt from pyproject.toml (then commit it)
+	$(PIP) install --quiet pip-tools
+	$(VENV)/bin/pip-compile --extra dev --strip-extras --output-file requirements.lock.txt pyproject.toml
+
+.PHONY: check-lock
+check-lock: install ## Fail if requirements.lock.txt and pyproject.toml disagree
+	$(PY) scripts/check_lock.py
 
 .PHONY: up
 up: ## Start Postgres in the background
@@ -108,7 +118,8 @@ test: install ## Run the test suite against an ephemeral Postgres
 	$(PYTEST)
 
 .PHONY: lint
-lint: install ## ruff + mypy (both must be clean)
+lint: install ## the CI lint job: lockfile drift + ruff + mypy
+	$(PY) scripts/check_lock.py
 	$(RUFF) check .
 	$(RUFF) format --check .
 	$(MYPY)

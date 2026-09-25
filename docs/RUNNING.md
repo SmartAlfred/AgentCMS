@@ -51,14 +51,23 @@ registry), which pulls fine — see §5.
 
 ## 3. Install
 
-Creates the project venv (if needed) and installs runtime + dev dependencies
-(`pyproject.toml`, `[project.optional-dependencies] dev`):
+Creates the project venv (if needed) and installs the **pinned** dependency set
+from `requirements.lock.txt` — the same file CI installs from, so a laptop and a
+CI runner resolve identical versions (`pyproject.toml` declares the ranges; the
+lock pins them):
 
 ```text
 $ make install
 .venv/bin/pip install --quiet --upgrade pip
-.venv/bin/pip install --quiet -e ".[dev]"
+.venv/bin/pip install --quiet --no-deps -r requirements.lock.txt
+.venv/bin/pip install --quiet --no-deps -e .
 ```
+
+Adding or changing a dependency means editing `pyproject.toml` and regenerating
+the lock with `make lock` (or `pip-compile --extra dev --strip-extras
+--output-file requirements.lock.txt pyproject.toml`), then committing both.
+`make check-lock` — part of `make lint` and of CI's `lint` job — fails when the
+two disagree, so the lock cannot silently drift from `pyproject.toml`.
 
 ## 4. Start Postgres (dev stack)
 

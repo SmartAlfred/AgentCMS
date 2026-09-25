@@ -1,5 +1,5 @@
 # Continuous integration (#2). Red CI blocks merge into main: branch protection
-# requires the `lint` and `test` checks (see docs/service.md § CI).
+# requires the `lint` and `test` checks (see docs/TESTING.md § Dependency lock).
 name: CI
 
 on:
@@ -26,8 +26,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install
-        run: python -m pip install -e ".[dev]"
+      - name: Install (pinned from requirements.lock.txt)
+        run: |
+          python -m pip install --upgrade pip
+          # Everything is pinned in the lock, so CI tests exactly what we ship.
+          python -m pip install --no-deps -r requirements.lock.txt
+          python -m pip install --no-deps -e .
+      - name: Lockfile matches pyproject.toml
+        run: python scripts/check_lock.py
       - name: ruff check
         run: ruff check .
       - name: ruff format
@@ -60,8 +66,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install
-        run: python -m pip install -e ".[dev]"
+      - name: Install (pinned from requirements.lock.txt)
+        run: |
+          python -m pip install --upgrade pip
+          # Everything is pinned in the lock, so CI tests exactly what we ship.
+          python -m pip install --no-deps -r requirements.lock.txt
+          python -m pip install --no-deps -e .
       - name: Upgrade from empty
         run: alembic upgrade head
       - name: Downgrade back to empty
@@ -101,8 +111,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install
-        run: python -m pip install -e ".[dev]"
+      - name: Install (pinned from requirements.lock.txt)
+        run: |
+          python -m pip install --upgrade pip
+          # Everything is pinned in the lock, so CI tests exactly what we ship.
+          python -m pip install --no-deps -r requirements.lock.txt
+          python -m pip install --no-deps -e .
       - name: Pytest
         run: pytest -q
 
@@ -132,8 +146,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install
-        run: python -m pip install -e ".[dev]"
+      - name: Install (pinned from requirements.lock.txt)
+        run: |
+          python -m pip install --upgrade pip
+          # Everything is pinned in the lock, so CI tests exactly what we ship.
+          python -m pip install --no-deps -r requirements.lock.txt
+          python -m pip install --no-deps -e .
       - name: Pytest (locale-scrubbed)
         run: |
           # Scrub locale vars to reproduce the failure mode from #34

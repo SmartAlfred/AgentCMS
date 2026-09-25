@@ -175,6 +175,42 @@ UTF-8 locale) before the call.
 `.github/workflows/ci.yml` runs `pytest -q` under `env -u LANG -u LC_ALL -u
 LC_CTYPE -u LANGUAGE` and must stay green.
 
+## Dependency lock
+
+CI does **not** resolve dependencies from `pyproject.toml` on every run. It installs
+the pinned set from `requirements.lock.txt`:
+
+```text
+python -m pip install --no-deps -r requirements.lock.txt
+python -m pip install --no-deps -e .
+```
+
+Why: on 2026-09-25 a routine CI run resolved SQLAlchemy **2.1.0**, which removed
+`sqlalchemy.ext.mypy.plugin` while `[tool.mypy].plugins` still required it, and the
+`lint` job died at startup with
+
+```text
+pyproject.toml:1: error: Error importing plugin "sqlalchemy.ext.mypy.plugin":
+No module named 'sqlalchemy.ext.mypy'  [misc]
+Found 1 error in 1 file (errors prevented further checking)
+```
+
+— before checking a single file. The gate was unpinnable, so it could be (and was)
+broken by a dependency release nobody chose.
+
+The contract now:
+
+- `pyproject.toml` holds the **ranges** (with upper bounds on the critical deps);
+  `requirements.lock.txt` holds the exact pins of the full closure, runtime + dev.
+- `python scripts/check_lock.py` fails if a dependency declared in `pyproject.toml`
+  is missing from the lock or is pinned outside its specifier. CI's `lint` job runs
+  it, and so does `make lint` / `make check-lock`.
+- Regenerate with `make lock` after editing `pyproject.toml`, and commit the lock in
+  the same change — the lock diff is the review of what CI will test.
+- `tests/test_dependency_contract.py` asserts the same two properties in the pytest
+  suite (a component of the lock, and every declared mypy plugin, must import),
+  so a broken gate fails the tests job too.
+
 ## Rules of thumb
 
 - Never run the gate against a database with data you care about

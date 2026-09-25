@@ -117,8 +117,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Mounted before the public router: its catch-alls (/{site_slug}) would
     # otherwise swallow /mcp, and Starlette matches routes in registration order.
     register_mcp_routes(app)
-    register_public_routes(app)
+    # Dashboard before the public router: the public catch-alls (/{site_slug},
+    # /{site_slug}/{slug}) would otherwise swallow every /dashboard/... URL
+    # (/dashboard/login matched site_slug="dashboard", slug="login"), which made
+    # the human dashboard unreachable in every deployment. Public routes stay
+    # last for exactly the same reason (#42).
     register_dashboard_routes(app)
+    register_public_routes(app)
 
     # Customise the generated OpenAPI document: add security schemes and servers.
     def custom_openapi() -> dict[str, Any]:
