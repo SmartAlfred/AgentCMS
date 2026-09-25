@@ -73,3 +73,25 @@ def test_lockfile_agrees_with_pyproject() -> None:
     assert LOCK_PATH.exists(), "requirements.lock.txt is missing — CI installs from it"
     problems = check()
     assert not problems, "lockfile drift detected:\n  - " + "\n  - ".join(problems)
+
+
+def test_ci_installs_from_the_lock_and_checks_it() -> None:
+    """Enforcement, not just a pin.
+
+    The pin only helps if CI is the thing that installs it. This asserts the
+    workflow keeps installing the locked set and keeps running the drift check,
+    so `pyproject.toml` alone can never change what CI tests again (#40).
+    """
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
+    assert workflow.count("-r requirements.lock.txt") >= 4, (
+        "a CI job no longer installs from requirements.lock.txt, so dependency "
+        "resolution would again be whatever pip picks on the day (#40)"
+    )
+    assert "scripts/check_lock.py" in workflow, (
+        "CI no longer runs the lockfile drift check, so pyproject.toml and "
+        "requirements.lock.txt could silently disagree (#40)"
+    )
+    assert 'pip install -e ".[dev]"' not in workflow, (
+        'CI has an unpinned `pip install -e ".[dev]"` step again — that is exactly '
+        "how `main` went red on 2026-09-25 (#40)"
+    )

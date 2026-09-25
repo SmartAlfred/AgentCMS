@@ -207,9 +207,9 @@ The contract now:
   it, and so does `make lint` / `make check-lock`.
 - Regenerate with `make lock` after editing `pyproject.toml`, and commit the lock in
   the same change — the lock diff is the review of what CI will test.
-- `tests/test_dependency_contract.py` asserts the same two properties in the pytest
-  suite (a component of the lock, and every declared mypy plugin, must import),
-  so a broken gate fails the tests job too.
+- `tests/test_dependency_contract.py` asserts the same two invariants inside the
+  pytest suite (the lock pins every component `pyproject.toml` declares, and every
+  declared mypy plugin imports), so a broken gate fails the `test` job too.
 
 ## Rules of thumb
 
