@@ -1,4 +1,15 @@
-# Deploy to Fly.io (Free Tier)
+# Deploy to Fly.io (Free Tier) — **UNVERIFIED**
+
+> ⚠️ **This guide is UNVERIFIED and NOT RECOMMENDED for production use.**
+>
+> The platform manifests (`fly.db.toml`, `fly.api.toml`) referenced in this guide
+> **do not exist** in the repository. The guide also does not set `AGENTCMS_IMAGE_TAG`
+> (required in production), so it cannot boot as written.
+>
+> Only **Docker Compose on a VM/VPS** is verified end-to-end. See
+> [docs/deploy/quickstart.md](../../docs/deploy/quickstart.md) for the verified path.
+>
+> Tracking issue: [#36](https://github.com/SmartAlfred/AgentCMS/issues/36)
 
 This guide takes you from `git clone` to a live HTTPS AgentCMS instance on Fly.io
 using the free tier (shared CPU, 256 MB RAM, 3 GB persistent volume).

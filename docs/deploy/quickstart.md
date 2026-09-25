@@ -5,26 +5,25 @@
 This guide gets you a production-ready AgentCMS instance with HTTPS, a database,
 automatic migrations, and an embed script — in about 5 minutes.
 
-## Choose Your Path
+## Verified Deployment Path
 
-| Platform | Time | Cost | Best For |
-|----------|------|------|----------|
-| **Docker Compose (VM/VPS)** | ~5 min | $4-10/mo | Full control, any cloud, bare metal |
-| **Fly.io** | ~10 min | Free tier available | Global edge, auto-scaling, custom domains free |
-| **Render** | ~10 min | Free tier available | Git-native, zero config, auto-deploys |
-| **Railway** | ~10 min | Free trial | Simplicity, built-in Postgres |
+Only **Docker Compose on a VM/VPS** is verified end-to-end at this revision.
 
-> **All paths use the exact same Docker image and compose stack.** The only
-> difference is how the container runs and how TLS is terminated.
+| Platform | Status | Time | Cost | Best For |
+|----------|--------|------|------|----------|
+| **Docker Compose (VM/VPS)** | ✅ Verified | ~5 min | $4-10/mo | Full control, any cloud, bare metal |
+| Fly.io | ❌ Unverified | — | — | Platform manifests missing; see #36 |
+| Render | ❌ Unverified | — | — | Platform manifests missing; see #36 |
+| Railway | ❌ Unverified | — | — | No documentation; see #36 |
 
-> **Verified at this revision:** only **Path 1 (Docker Compose)** is proven
-> end-to-end. Paths 2–4 are written from intent, not from a run: their platform
-> manifests are missing and they never set `AGENTCMS_IMAGE_TAG`, so they cannot
-> boot as written — see #36. Compose-path gaps: #35, #37, #38, #39.
+> **Paths 2–4 (Fly.io, Render, Railway) are not verified.** Their platform
+> manifests (`fly.toml`, `render.yaml`, `railway.json`) do not exist in this
+> repository, and they never set `AGENTCMS_IMAGE_TAG` (required in production),
+> so they cannot boot as written. See GitHub issue #36 for tracking.
 
 ---
 
-## Path 1: Docker Compose on a VM (Recommended Default)
+## Docker Compose on a VM (Recommended Default)
 
 **Prerequisites**: A Linux VM (Ubuntu 22.04+/24.04) with Docker installed, a domain pointed at it.
 
@@ -49,64 +48,6 @@ curl https://your-domain.com/healthz
 ```
 
 **Full guide**: [deploy/vm/quickstart.md](deploy/vm/quickstart.md)
-
----
-
-## Path 2: Fly.io (Free Tier)
-
-**Prerequisites**: `flyctl` installed, Fly account.
-
-```bash
-# 1. Clone
-git clone https://github.com/SmartAlfred/AgentCMS.git
-cd AgentCMS
-
-# 2. Create apps & volumes
-fly volumes create pgdata --size 3 --region ord --app agentcms-db
-fly apps create agentcms-db
-fly apps create agentcms-api
-
-# 3. Set secrets (API app)
-fly secrets set SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')" --app agentcms-api
-# Required: with APP_ENV=production the app refuses to boot without an immutable tag
-fly secrets set AGENTCMS_IMAGE_TAG="agentcms:v0.3.0" --app agentcms-api
-fly secrets set POSTGRES_PASSWORD="your-db-password" --app agentcms-api
-fly secrets set DATABASE_URL="postgresql+psycopg://agentcms:your-db-password@agentcms-db.internal:5432/agentcms" --app agentcms-api
-fly secrets set EMBED_ORIGINS="https://your-frontend.com" --app agentcms-api
-
-# 4. Set secrets (DB app)
-fly secrets set POSTGRES_PASSWORD="your-db-password" --app agentcms-db
-
-# 5. Deploy DB
-fly deploy -c deploy/fly/fly.db.toml --app agentcms-db
-
-# 6. Run migrations
-docker build -t agentcms-migrate -f deploy/docker/Dockerfile .
-docker run --rm -e DATABASE_URL="postgresql+psycopg://agentcms:your-db-password@agentcms-db.internal:5432/agentcms" -e SECRET_KEY="..." -e APP_ENV=production agentcms-migrate python -m alembic upgrade head
-
-# 7. Deploy API
-fly deploy -c deploy/fly/fly.api.toml --app agentcms-api
-
-# 8. Verify
-curl https://agentcms-api.fly.dev/healthz
-```
-
-**Full guide**: [deploy/fly/quickstart.md](deploy/fly/quickstart.md)
-
----
-
-## Path 3: Render (Free Tier)
-
-**Prerequisites**: Render account, GitHub repo.
-
-1. Push code to GitHub
-2. Create PostgreSQL database on Render (Free)
-3. Create Web Service → Docker → `deploy/docker/Dockerfile`
-4. Add environment variables (see guide)
-5. Set Pre-Deploy Command: `python -m alembic upgrade head`
-6. Deploy → Live at `https://your-app.onrender.com`
-
-**Full guide**: [deploy/render/quickstart.md](deploy/render/quickstart.md)
 
 ---
 
