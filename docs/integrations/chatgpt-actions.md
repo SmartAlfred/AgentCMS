@@ -70,7 +70,7 @@ Copy this entire JSON into the **Schema** field in the Custom GPT Actions config
   "openapi": "3.1.0",
   "info": {
     "title": "AgentCMS MCP Tools",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "description": "Typed tool calls for AgentCMS via MCP-over-HTTP. Use with a capability token (cap_...) in the Authorization header."
   },
   "servers": [

@@ -171,7 +171,7 @@ $ make dev
 
 ```text
 $ curl -fsS http://127.0.0.1:8000/healthz
-{"status":"ok","service":"AgentCMS","version":"0.3.0","env":"development"}
+{"status":"ok","service":"AgentCMS","version":"0.3.1","env":"development"}
 
 $ curl -fsS http://127.0.0.1:8000/readyz
 {"status":"ready","checks":{"database":{"status":"ok","ok":true,"detail":"","latency_ms":107.76},"queue":{"status":"ok","ok":true,"detail":"pending=0, oldest=0s","latency_ms":2.22},"object_store":{"status":"down","ok":false,"detail":"[Errno 61] Connection refused","latency_ms":0.0}}}
@@ -180,7 +180,7 @@ $ curl -sS -o /dev/null -w "%{http_code} %{content_type}\n" http://127.0.0.1:800
 200 text/html; charset=utf-8
 
 $ curl -fsS http://127.0.0.1:8000/openapi.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['openapi'], d['info']['version'], len(d['paths']), 'paths')"
-3.1.0 0.3.0 69 paths
+3.1.0 0.3.1 69 paths
 ```
 
 Notes on what you are actually reading:

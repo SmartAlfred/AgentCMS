@@ -493,7 +493,7 @@ async def handle_check_status(arguments: dict[str, Any]) -> dict[str, Any]:
     """Handle check_status tool call."""
     return {
         "service": "AgentCMS",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "available_tools": [t.name for t in TOOLS],
         "auth_note": "Provide Authorization header with acms_* or cap_* token",
         "rate_limits": {

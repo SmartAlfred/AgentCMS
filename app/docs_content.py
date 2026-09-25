@@ -242,7 +242,7 @@ def build_discover_json(base_url: str) -> dict[str, Any]:
     """Build the /v1/discover response body."""
     return {
         "service": "AgentCMS",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "api_base": f"{base_url}/v1",
         "auth_modes": ["bearer", "capability_link"],
         "docs": f"{base_url}/docs",
@@ -263,13 +263,13 @@ def build_discover_json(base_url: str) -> dict[str, Any]:
 CHANGELOG_ENTRIES: list[dict[str, str]] = [
     {
         "date": "2026-09-17",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "type": "added",
         "summary": "MVP: post CRUD, publish/unpublish, capability links, agent-facing docs.",
     },
     {
         "date": "2026-09-17",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "type": "added",
         "summary": "GET /llms.txt, GET / (content-negotiated), GET /v1/discover, GET /changelog.",
     },

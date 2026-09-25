@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # -- runtime ------------------------------------------------------------
     app_env: AppEnv = "development"
     app_name: str = "AgentCMS"
-    app_version: str = "0.3.0"
+    app_version: str = "0.3.1"
     log_level: str = "INFO"
     debug: bool = False
     docs_enabled: bool = True

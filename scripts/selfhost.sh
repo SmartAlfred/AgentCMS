@@ -4,7 +4,7 @@
 #   ./scripts/selfhost.sh                              generate .env, validate, build, start
 #   ./scripts/selfhost.sh --setup-only                 only write/fill .env (no Docker needed)
 #   ./scripts/selfhost.sh --env-file p.env             use a different env file
-#   ./scripts/selfhost.sh --tag ghcr.io/owner/agentcms@v0.3.0   pin AGENTCMS_IMAGE_TAG explicitly
+#   ./scripts/selfhost.sh --tag ghcr.io/owner/agentcms:v0.3.1   pin AGENTCMS_IMAGE_TAG explicitly
 #   ./scripts/selfhost.sh --tag ghcr.io/owner/agentcms@sha256:abc123   pin to immutable digest
 #   ./scripts/selfhost.sh --no-build                   reuse an already built image
 #   DOMAIN=cms.example.com CADDY_EMAIL=me@example.com ./scripts/selfhost.sh

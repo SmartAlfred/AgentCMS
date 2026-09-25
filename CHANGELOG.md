@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-25
+
 ### Fixed
 - `scripts/deploy_smoke.sh` and `scripts/upgrade_smoke.sh` no longer call
   `POST /v1/sites` or `POST /v1/sites/{slug}/capability-links` -- neither route
@@ -67,5 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JWT-based authentication and capability tokens
 - Agent-first design: capability links, embed tokens, static export, llms.txt
 
-[Unreleased]: https://github.com/smartalfred/agentcms/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/smartalfred/agentcms/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/smartalfred/agentcms/releases/tag/v0.3.1
 [0.3.0]: https://github.com/smartalfred/agentcms/releases/tag/v0.3.0

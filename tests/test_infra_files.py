@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -470,3 +471,107 @@ def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "ALL SMOKE TESTS PASSED" in proc.stdout, proc.stdout
     assert "CORS deny-all confirmed" in proc.stdout, proc.stdout
+
+
+# --- the release pipeline itself (#38): a tag is the only thing that ships ---
+
+
+def _release_workflow() -> str:
+    return (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text()
+
+
+def _workflow_step_body(workflow: str, name: str) -> str:
+    """Return the `run:` script of the named step, de-indented.
+
+    The release workflow is read as text on purpose: parsing YAML here would
+    need a dependency the fast job does not have, and the assertions below are
+    about *what the step executes*, not about YAML structure.
+    """
+    lines = workflow.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip() == f"- name: {name}"), None)
+    assert start is not None, f"release.yml has no step named {name!r}"
+    body: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("      - ") or (line and not line.startswith("  ")):
+            break
+        body.append(line)
+    run = "\n".join(body)
+    assert "run: |" in run, f"step {name!r} has no `run:` block"
+    script = run.split("run: |", 1)[1].splitlines()
+    indents = [len(line) - len(line.lstrip()) for line in script if line.strip()]
+    indent = min(indents)
+    return "\n".join(line[indent:] if line.strip() else "" for line in script).strip()
+
+
+def test_release_workflow_fires_on_a_version_tag_only() -> None:
+    """A tag publishes an image (and can be re-issued); a branch push must not."""
+    workflow = _release_workflow()
+    assert 'tags: ["v*"]' in workflow, "the image must be cut by a version tag (#38)"
+    assert "workflow_dispatch" in workflow, "a fix to the publish job must be re-runnable"
+    assert "workflow_dispatch:" in workflow.split("jobs:", 1)[0], (
+        "workflow_dispatch must be a trigger, not just a mention"
+    )
+    assert "branches:" not in workflow.split("jobs:", 1)[0], (
+        "every push to main would publish an image; only tags may"
+    )
+    assert 'case "$ref" in' in workflow and "v[0-9]*)" in workflow
+
+
+def test_release_workflow_rejects_a_tag_that_disagrees_with_pyproject(tmp_path: Path) -> None:
+    """The version guard is executed here, not merely asserted on (#38).
+
+    A tag that disagrees with the package metadata ships an image that lies about
+    what it is, so the guard is the load-bearing line of the release workflow —
+    and a regression test that only greps for it would not notice it being
+    weakened (`[ "$version" = "0.3.1" ]`, say).
+    """
+    guard = _workflow_step_body(_release_workflow(), "The tag must match pyproject.toml")
+    ref_expr = "${{ steps.tag.outputs.ref }}"
+    assert ref_expr in guard, "the guard must compare the tag that was pushed"
+    assert "pyproject.toml" in guard and "exit 1" in guard
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "agentcms"\nversion = "0.3.1"\n', encoding="utf-8"
+    )
+    # The guard shells out to `python3`, which needs 3.11+ for `tomllib`; the
+    # runner provides that, a laptop's /usr/bin/python3 may not.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "python3").symlink_to(sys.executable)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
+    }
+    for ref, ok in (("v0.3.1", True), ("v0.3.0", False), ("0.3.1", False), ("v0.4.0", False)):
+        proc = subprocess.run(
+            ["bash", "-e", "-c", guard.replace(ref_expr, ref)],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert (proc.returncode == 0) is ok, (
+            f"tag {ref!r}: expected {'success' if ok else 'failure'}, got {proc.returncode}\n"
+            f"{proc.stdout}{proc.stderr}"
+        )
+        if not ok:
+            assert "pyproject.toml" in proc.stderr, proc.stderr
+
+
+def test_release_workflow_boots_the_published_digest_with_no_skip_hatch() -> None:
+    """The published image is deployed and exercised, or the run is red (#38)."""
+    workflow = _release_workflow()
+    assert "  verify-published:" in workflow, "pushing is not shipping: something must boot the digest"
+    verify = workflow.split("  verify-published:", 1)[1]
+    assert "needs: publish" in verify, "a failed publish must not leave a green run"
+    assert 'docker pull "$PINNED"' in verify, "the job must pull what it published"
+    assert "ghcr.io/${{ needs.publish.outputs.image }}@${{ needs.publish.outputs.digest }}" in verify, (
+        "the boot must be pinned to the digest, not to a moving tag"
+    )
+    assert "--no-build" in verify, "the published image is booted, not rebuilt"
+    assert "selfhost_e2e.sh" in verify, "one driver: the same script CI runs on the source build"
+    for hatch in ("continue-on-error", "docker-available", "if: false"):
+        assert hatch not in workflow, f"{hatch!r} would let a broken release go green"

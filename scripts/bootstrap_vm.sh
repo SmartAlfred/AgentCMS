@@ -109,7 +109,7 @@ cat > .env <<EOF
 # --- Runtime ---
 APP_ENV=production
 APP_NAME=AgentCMS
-APP_VERSION=0.3.0
+APP_VERSION=0.3.1
 LOG_LEVEL=INFO
 LOG_FORMAT=json
 DOCS_ENABLED=true

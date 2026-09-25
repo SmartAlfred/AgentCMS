@@ -54,7 +54,7 @@ make selfhost DOMAIN=your-domain.com CADDY_EMAIL=you@example.com
 
 # 3. Verify
 curl https://your-domain.com/healthz
-# {"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
+# {"status":"ok","service":"AgentCMS","version":"0.3.1","env":"production"}
 
 # 4. Prove it serves content: liveness, readiness and a real roundtrip
 #    (create a site -> publish a post -> fetch it from the public URL).

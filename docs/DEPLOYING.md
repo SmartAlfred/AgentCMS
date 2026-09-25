@@ -90,7 +90,7 @@ parse without them):
 
 ```text
 $ APP_ENV=production SECRET_KEY=prod-test-secret-key-0123456789abcdef0123456789abcdef \
-    POSTGRES_PASSWORD='ci-prod-password' AGENTCMS_IMAGE_TAG=agentcms:v0.3.0 \
+    POSTGRES_PASSWORD='ci-prod-password' AGENTCMS_IMAGE_TAG=agentcms:v0.3.1 \
     docker compose -f compose.prod.yml up -d --build
  Container agentcms-prod-db-1 Waiting
  Container agentcms-prod-db-1 Healthy
@@ -211,10 +211,10 @@ make gate-migrations         # DESTRUCTIVE clone of the CI migrations job (up/do
 
 ```text
 $ curl -fsS http://127.0.0.1:8000/healthz
-{"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
+{"status":"ok","service":"AgentCMS","version":"0.3.1","env":"production"}
 
 $ curl -fsS http://127.0.0.1:8000/v1/version
-{"service":"AgentCMS","version":"0.3.0","env":"production","git_sha":"unknown","build_time":"1789754635","migration_head":"f4e5d6c7b8a9","openapi_version":"3.1.0"}
+{"service":"AgentCMS","version":"0.3.1","env":"production","git_sha":"unknown","build_time":"1789754635","migration_head":"f4e5d6c7b8a9","openapi_version":"3.1.0"}
 ```
 
 (`git_sha` is `unknown` here because no `.git` exists inside the container;
@@ -267,13 +267,13 @@ verify OK: 23 files matched manifest.json for /private/tmp/agentcms-export
 
 ## 9. Using published GHCR images (self-host)
 
-Starting with v0.3.0, every release publishes a **multi-arch image to GHCR**
+Starting with v0.3.1, every release publishes a **multi-arch image to GHCR**
 with SBOM and provenance attestation. Self-hosters should pin the **digest**
 (from the release output or `docker pull`) for an immutable, reproducible deploy.
 
 ```text
 # 1. Pull the image (verifies provenance + fetches manifest for your arch)
-$ docker pull ghcr.io/smartalfred/agentcms:v0.3.0
+$ docker pull ghcr.io/smartalfred/agentcms:v0.3.1
 …
 Digest: sha256:abc123def456…
 
@@ -284,10 +284,10 @@ AGENTCMS_IMAGE_TAG=ghcr.io/smartalfred/agentcms@sha256:abc123def456
 The release workflow (`.github/workflows/release.yml`) prints the exact digest
 in its `document-digest` job output. Copy that line into your `.env` — the
 production guard (`app/config.py`) accepts digests and full semver tags
-(`v0.3.0`), but rejects `latest`, `local`, `dev`, or major.minor-only tags.
+(`v0.3.1`), but rejects `latest`, `local`, `dev`, or major.minor-only tags.
 
 If you prefer to build locally, `make docker-build` / `scripts/selfhost.sh`
-still work; they tag `agentcms:v0.3.0` from `pyproject.toml` which the guard
+still work; they tag `agentcms:v0.3.1` from `pyproject.toml` which the guard
 also accepts.
 
 ## 10. Known gaps at this revision

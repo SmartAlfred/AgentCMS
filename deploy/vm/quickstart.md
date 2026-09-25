@@ -102,7 +102,7 @@ cd /opt/agentcms
 cat > .env <<'EOF'
 APP_ENV=production
 APP_NAME=AgentCMS
-APP_VERSION=0.3.0
+APP_VERSION=0.3.1
 LOG_LEVEL=INFO
 LOG_FORMAT=json
 DOCS_ENABLED=true
@@ -177,7 +177,7 @@ curl http://127.0.0.1:8000/healthz
 
 Expected:
 ```json
-{"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
+{"status":"ok","service":"AgentCMS","version":"0.3.1","env":"production"}
 ```
 
 ## 6. Run Migrations (if not auto-run)
