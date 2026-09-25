@@ -299,7 +299,7 @@ class TestSeed:
     def test_seed_creates_expected_data(self, db: Session) -> None:
         from scripts.seed import seed
 
-        raw_token = seed()
+        raw_token, _ = seed()
         assert raw_token, "seed should return a non-empty token"
 
         with session_scope() as session:

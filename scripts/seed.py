@@ -58,7 +58,7 @@ DEMO_POSTS: list[dict[str, str]] = [
 ]
 
 
-def seed() -> str:
+def seed() -> tuple[str, str]:
     """Run the seed.  Returns the raw capability token for the caller to display.
 
     Idempotent: an existing demo site/actor/post is reused and the demo capability
@@ -175,19 +175,20 @@ def seed() -> str:
                 )
             )
 
-    return raw_token
+    return raw_token, embed_raw
 
 
 def main() -> None:
     """CLI entry-point."""
     reset_settings_cache()
-    token = seed()
+    token, embed_token = seed()
     settings = get_settings()
     slug = settings.default_site_slug
     print(f"Seed complete for {settings.app_name}.")
     print(f"  Demo site:         /v1/sites/{slug}")
     print(f"  Capability token:  {token}")
-    print(f"  Embed token (read-only): {embed_raw}  # for /embed/v1/posts?token=... (write tokens are rejected)")
+    print(f"  Embed token (read-only): {embed_token}")
+    print("    (use this one for /embed/v1/posts?token=... -- write tokens are rejected)")
     print(f"  Instruction sheet: GET  /c/{token}")
     print(f"  Write a draft:     POST /c/{token}/posts   (no Authorization header needed)")
     print(f"  Public blog:       GET  /{slug}  ·  /{slug}/rss.xml  ·  /llms.txt")

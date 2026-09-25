@@ -28,7 +28,7 @@ def _counts(db: Session) -> dict[str, int]:
 
 
 def test_seed_token_verifies_with_the_real_capability_service(db: Session) -> None:
-    token = seed()
+    token, _ = seed()
 
     assert token.startswith("cap_blog_"), f"seeded token has the pre-#6 shape: {token!r}"
 
@@ -47,7 +47,7 @@ def test_seed_token_verifies_with_the_real_capability_service(db: Session) -> No
 def test_seeded_token_is_accepted_by_the_instruction_sheet_and_write_path(
     db: Session, client: TestClient
 ) -> None:
-    token = seed()
+    token, _ = seed()
 
     sheet = client.get(f"/c/{token}")
     assert sheet.status_code == 200, sheet.text
@@ -58,10 +58,10 @@ def test_seeded_token_is_accepted_by_the_instruction_sheet_and_write_path(
 
 
 def test_seed_is_idempotent_and_refreshes_the_demo_link(db: Session) -> None:
-    first = seed()
+    first, _ = seed()
     before = _counts(db)
 
-    second = seed()
+    second, _ = seed()
     after = _counts(db)
 
     assert before == after == {"sites": 1, "actors": 1, "links": 1, "posts": 3}
