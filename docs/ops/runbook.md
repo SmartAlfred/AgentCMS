@@ -170,6 +170,27 @@ after 240s.
    Expect: `dropped=0`. A healthy new container passes `/readyz` before compose
    cuts over traffic, so there is no window.
 
+5b. **Capacity drill (what one instance actually sustains).**  The deploy
+   drill above answers "were any requests dropped"; this answers "how many can
+   it serve, and where does it break":
+   ```bash
+   python -m scripts.load_test --url https://localhost:8443 --path /blog/pre-backup-marker \
+     --levels "20@50,40@100,80@200" --duration 60 --sla-level 1 --insecure \
+     --stop-on-p95-ms 500 --json-out /tmp/load-$(date -u +%Y%m%dT%H%M%SZ).json
+   ```
+   Each 60 s level reports p50/p95/p99, error rate, status breakdown, achieved
+   throughput and error budget consumed; the ladder stops at the first level that
+   breaches `--stop-on-p95-ms` (default: the 500 ms `HighLatencyP95` threshold)
+   and that level is the measured ceiling.  Exit code 0 means the levels up to
+   `--sla-level` had zero dropped requests, so a deliberate ramp past the ceiling
+   still passes.  Do **not** point it at a capability-authenticated path: those are
+   capped at `capability_rate_limit_per_link` per 60 s (see §7).
+
+   Measured 2026-09-25 (`agentcms:v0.3.0`, 8-core host): target 50 rps at p95
+   **14.9 ms**; ceiling **~145 page renders/s** because the api is one uvicorn
+   process pinned at one core; the ops Prometheus p95 crossed 0.5 s during the
+   saturation levels.  Full log: `docs/ops/drills/2026-09-25-load.md`.
+
 **Rollback (one command, timed in §7):**
 
 ```bash
