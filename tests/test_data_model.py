@@ -312,7 +312,7 @@ class TestSeed:
         assert sites == 1
         assert posts == 3
         assert actors == 1
-        assert caps == 1
+        assert caps == 2  # write-capable link + read-only embed link (#37)
         assert revisions == 3  # one revision per post
 
 
