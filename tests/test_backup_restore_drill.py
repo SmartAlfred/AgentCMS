@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -204,7 +205,72 @@ def _postgres_server():
         dispose_engine()
 
 
-@contextlib.contextmanager
+def _reap_orphan_servers(root: Path | None = None, min_age_seconds: int = 600) -> list[str]:
+    """Stop and delete throwaway servers left behind by a killed run.
+
+    A pytest process killed mid-run (the harness's 4800 s cap, a watchdog,
+    Ctrl-C) never runs its fixture finalizer, so its postmaster survives and
+    keeps its SysV shared-memory segment. 28 such orphans from earlier killed
+    runs exhausted macOS's `kern.sysv.shmmni = 32` on 2026-09-25; after that
+    *every* `initdb` on the machine died with `shmget(...) failed: No space left
+    on device` / `could not create shared memory segment`, which reddened the
+    local gate that lands tickets for hours. Reaping stale servers (far older
+    than any live test, so a concurrent run is never touched) bounds the damage
+    of the next kill.
+    """
+    tmp = root or Path(tempfile.gettempdir())
+    now = time.time()
+    reaped: list[str] = []
+    for datadir in sorted(tmp.glob("agentcms-drill-pgdata-*")):
+        pidfile = datadir / "postmaster.pid"
+        try:
+            fields = pidfile.read_text().split()
+            age = now - pidfile.stat().st_mtime
+        except OSError:
+            continue
+        if not fields or age < min_age_seconds:
+            continue
+        pid = int(fields[0])
+        sockdir = Path(fields[4]) if len(fields) > 4 else None
+        if str(datadir) in _ps_command(pid):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGTERM)
+            for _ in range(20):
+                time.sleep(0.25)
+                if not _ps_command(pid).strip():
+                    break
+            else:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
+        shutil.rmtree(datadir, ignore_errors=True)
+        if sockdir is not None and str(sockdir).startswith(str(tmp)):
+            shutil.rmtree(sockdir, ignore_errors=True)
+        reaped.append(datadir.name)
+    return reaped
+
+
+def _ps_command(pid: int) -> str:
+    """`ps -o command=` for one pid, or "" when it is gone (macOS has no /proc)."""
+    return subprocess.run(
+        ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, check=False
+    ).stdout
+
+
+def _local_server_options(port: int, sockdir: Path) -> str:
+    """`pg_ctl -o` options for the throwaway drill server (one place, one truth).
+
+    Measured on 2026-09-25 with a real server: a PostgreSQL 18 server on macOS
+    takes exactly **one** `kern.sysv.shmmni` segment whether or not
+    `shared_memory_type=mmap` is set, and the limit is 32 -- so the machine is
+    wedged by *how many servers are alive*, not by how much memory each maps.
+    Keep the count low: see `_reap_orphan_servers` below.
+    """
+    return (
+        f"-p {port} -k {sockdir} -c listen_addresses=127.0.0.1 "
+        "-c fsync=off -c full_page_writes=off -c timezone=UTC"
+    )
+
+
 def _postgres_server_inner(db_name: str):
     """Start a throwaway PostgreSQL server (external, Docker, or local initdb) for the drill."""
     # Strategy 1: Use TEST_DATABASE_URL if provided (CI service container)
@@ -310,6 +376,10 @@ def _postgres_server_inner(db_name: str):
     if bindir is None:
         pytest.skip("No PostgreSQL available (no Docker, no initdb/pg_ctl)")
 
+    orphans = _reap_orphan_servers()
+    if orphans:
+        print(f"reaped {len(orphans)} orphaned drill server(s): {', '.join(orphans)}", flush=True)
+
     datadir = Path(tempfile.mkdtemp(prefix="agentcms-drill-pgdata-"))
     sockdir = Path(tempfile.mkdtemp(prefix="agentcms-drill-pgsock-"))
     logfile = datadir / "server.log"
@@ -335,10 +405,7 @@ def _postgres_server_inner(db_name: str):
         shutil.rmtree(sockdir, ignore_errors=True)
         pytest.fail(f"initdb failed: {init.stderr.strip()}")
 
-    options = (
-        f"-p {port} -k {sockdir} -c listen_addresses=127.0.0.1 "
-        "-c fsync=off -c full_page_writes=off -c timezone=UTC"
-    )
+    options = _local_server_options(port, sockdir)
     started = _run(
         [
             str(bindir / "pg_ctl"),

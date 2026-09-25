@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -575,3 +576,39 @@ def test_release_workflow_boots_the_published_digest_with_no_skip_hatch() -> Non
     assert "selfhost_e2e.sh" in verify, "one driver: the same script CI runs on the source build"
     for hatch in ("continue-on-error", "docker-available", "if: false"):
         assert hatch not in workflow, f"{hatch!r} would let a broken release go green"
+
+
+def test_drill_reaps_the_servers_a_killed_run_left_behind(tmp_path: Path) -> None:
+    """A killed drill must not exhaust the machine's shared memory (#39, #38).
+
+    Measured on 2026-09-25: one PostgreSQL server takes one of macOS's
+    `kern.sysv.shmmni = 32` SysV segments, so 28 servers leaked by earlier killed
+    runs (a harness cap, a watchdog, Ctrl-C -- the finalizer never ran) wedged the
+    workstation: every later `initdb` died with `shmget(...) failed: No space left
+    on device`, which is what kept the ticket pipeline's own gate red for hours and
+    delayed the release that gate is meant to land.
+    """
+    from tests.test_backup_restore_drill import _local_server_options, _reap_orphan_servers
+
+    options = _local_server_options(55999, Path("/tmp/agentcms-drill-pgsock-x"))
+    assert "-p 55999" in options and "-k /tmp/agentcms-drill-pgsock-x" in options
+    source = (REPO_ROOT / "tests" / "test_backup_restore_drill.py").read_text()
+    assert "orphans = _reap_orphan_servers()" in source, (
+        "a throwaway server must reap the last killed run's orphans before it starts"
+    )
+
+    root = tmp_path / "tmp"
+    stale = root / "agentcms-drill-pgdata-stale"
+    stale.mkdir(parents=True)
+    (stale / "postmaster.pid").write_text(
+        f"999999\n{stale}\n1\n55999\n{root / 'sock-stale'}\n127.0.0.1\n\nready\n"
+    )
+    two_hours_ago = time.time() - 7200
+    os.utime(stale / "postmaster.pid", (two_hours_ago, two_hours_ago))
+    fresh = root / "agentcms-drill-pgdata-fresh"
+    fresh.mkdir()
+    (fresh / "postmaster.pid").write_text("999998\nx\n1\n2\n3\n4\n5\nready\n")
+
+    assert _reap_orphan_servers(root=root) == ["agentcms-drill-pgdata-stale"]
+    assert not stale.exists(), "a stale drill server must be stopped and deleted"
+    assert fresh.exists(), "a concurrent test's server must never be touched"
