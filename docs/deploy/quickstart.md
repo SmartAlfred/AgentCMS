@@ -68,8 +68,16 @@ make selfhost-verify CAPABILITY_TOKEN="$CAP"
 
 ### 1. Open the Dashboard
 
-A fresh instance has **no site yet**, so create the first one over the API (the
-dashboard reads and edits it from then on; the create-a-site form is tracked in #45):
+A fresh instance has **no site yet**. You can create the first one in two ways:
+
+**Option A: Via the Dashboard (recommended)**
+1. Open `https://your-domain.com/dashboard`
+2. Sign in with a magic link (email)
+3. Go to **Settings** → the "Create your first site" form appears
+4. Fill in the slug, name, and optional base URL/publish mode
+5. Click **Create site**
+
+**Option B: Via the API**
 
 ```bash
 curl -X POST https://your-domain.com/v1/sites \

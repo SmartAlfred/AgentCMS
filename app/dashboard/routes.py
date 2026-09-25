@@ -287,7 +287,7 @@ async def overview(request: Request) -> Response:
 
         # Site info (for the site slug)
         site_rows = conn.execute(text("SELECT slug FROM sites LIMIT 1")).all()
-        site_slug = site_rows[0][0] if site_rows else "blog"
+        site_slug = site_rows[0][0] if site_rows else None
 
     # Kill switch state
     from app.services.kill_switch import get_kill_switch_store
@@ -295,9 +295,12 @@ async def overview(request: Request) -> Response:
     ks = get_kill_switch_store()
     kill_switch_state = ks.get_state().to_dict()
 
+    # Pass the actual site slug (or None) to the template
+    display_slug = site_slug or "blog"
+
     return HTMLResponse(
         render_overview(
-            site_slug=site_slug,
+            site_slug=display_slug,
             post_counts=post_counts,
             recent_activity=recent_activity,
             capability_links=capability_links,
@@ -348,6 +351,10 @@ async def posts_list(
             for r in rows
         ]
 
+        # Get site slug for the template
+        site_rows = conn.execute(text("SELECT slug FROM sites LIMIT 1")).all()
+        site_slug = site_rows[0][0] if site_rows else None
+
     next_cursor = None
     if len(posts) > 20:
         posts = posts[:20]
@@ -360,6 +367,7 @@ async def posts_list(
             status_filter=status,
             next_cursor=next_cursor,
             csrf_token=csrf,
+            site_slug=site_slug or "blog",
             request=request,
         )
     )
@@ -1254,6 +1262,55 @@ async def update_site_settings(
 
     return _toast_response(
         "Settings saved",
+        level="success",
+        redirect="/dashboard/settings",
+    )
+
+
+@dashboard_router.post("/settings/site/create")
+async def create_site_settings(
+    request: Request,
+    site_slug: str = Form(""),
+    site_name: str = Form(""),
+    base_url: str = Form(""),
+    publish_mode: str = Form("auto"),
+) -> Response:
+    """Create the first site from the dashboard."""
+    user = _require_user(request)
+    if not user:
+        return RedirectResponse("/dashboard/login", status_code=302)
+    _require_csrf(request)
+
+    from app.db.session import get_engine
+    from app.services.sites import InvalidSiteError, SiteSlugConflictError, create_site
+
+    slug = (site_slug or "").strip().lower()
+    name = (site_name or "").strip()
+
+    with get_engine().begin() as conn:
+        from sqlalchemy.orm import Session as SessionType
+
+        session = SessionType(bind=conn)
+        try:
+            site = create_site(
+                session,
+                slug=slug,
+                name=name,
+                base_url=base_url if base_url else None,
+                publish_mode=publish_mode,
+                actor_id=uuid.UUID(user.id),
+                actor_label=user.label,
+                actor_kind="human",
+            )
+        except InvalidSiteError as exc:
+            return _toast_response(f"Invalid site: {exc.detail}", level="error")
+        except SiteSlugConflictError as exc:
+            return _toast_response(f"Site slug already exists: {exc.detail}", level="error")
+        except Exception as exc:
+            return _toast_response(f"Error: {exc}", level="error")
+
+    return _toast_response(
+        f"Site '{site.name}' created",
         level="success",
         redirect="/dashboard/settings",
     )

@@ -314,6 +314,7 @@ def render_overview(
     request: Any = None,
 ) -> str:
     """Render the overview dashboard page."""
+    has_site = bool(site_slug) and site_slug != "blog"
     total = sum(post_counts.values())
     status_items = [
         ("draft", post_counts.get("draft", 0)),
@@ -389,9 +390,15 @@ def render_overview(
         'hx-swap="none" ' + _hx_headers_csrf(csrf_token)
     )
 
+    has_site = site_slug != "blog"  # "blog" is the default fallback when no site exists
+    site_badge = (
+        '<span class="badge badge--draft" style="font-size:12px">' + _esc(site_slug) + "</span>"
+        if has_site
+        else '<a href="/dashboard/settings" class="btn btn--sm btn--ghost">Create your first site</a>'
+    )
+
     body = (
-        '<div class="dash-header"><h2>Overview</h2>'
-        '<span class="badge badge--draft" style="font-size:12px">' + _esc(site_slug) + "</span></div>"
+        '<div class="dash-header"><h2>Overview</h2>' + site_badge + "</div>"
         '<div style="display:flex;align-items:center;gap:var(--s-4);margin-bottom:var(--s-6);'
         "padding:var(--s-4) var(--s-5);background:var(--bg-raised-2);"
         'border:1px solid var(--border-subtle);border-radius:var(--r-lg)">'
@@ -430,6 +437,8 @@ def render_posts_list(
     request: Any = None,
 ) -> str:
     """Render the posts list page."""
+    has_site = bool(site_slug) and site_slug != "blog"
+
     row_parts: list[str] = []
     for p in posts:
         status = p.get("status", "draft")
@@ -487,20 +496,32 @@ def render_posts_list(
             + '" class="btn btn--sm btn--ghost">Next</a>'
         )
 
-    empty = (
-        '<tr><td colspan="4"><div class="empty-state">'
-        '<div class="empty-state__mesh"></div>'
-        '<div class="empty-state__content"><h3>No posts yet</h3>'
-        "<p>Create one with <code>curl</code> -- see "
-        '<a href="/llms.txt">/llms.txt</a></p>'
-        '<a href="/dashboard/editor" class="btn btn--primary">Create post</a>'
-        "</div></div></td></tr>"
-    )
+    if has_site:
+        empty = (
+            '<tr><td colspan="4"><div class="empty-state">'
+            '<div class="empty-state__mesh"></div>'
+            '<div class="empty-state__content"><h3>No posts yet</h3>'
+            "<p>Create one with <code>curl</code> -- see "
+            '<a href="/llms.txt">/llms.txt</a></p>'
+            '<a href="/dashboard/editor" class="btn btn--primary">Create post</a>'
+            "</div></div></td></tr>"
+        )
+        new_post_btn = '<a href="/dashboard/editor" class="btn btn--primary">New post</a>'
+    else:
+        empty = (
+            '<tr><td colspan="4"><div class="empty-state">'
+            '<div class="empty-state__mesh"></div>'
+            '<div class="empty-state__content"><h3>No site configured</h3>'
+            "<p>Create a site first in <a href='/dashboard/settings'>Settings</a>, then add posts.</p>"
+            '<a href="/dashboard/settings" class="btn btn--primary">Create site</a>'
+            "</div></div></td></tr>"
+        )
+        new_post_btn = '<a href="/dashboard/settings" class="btn btn--primary">Create your first site</a>'
+
     tbody = rows if rows else empty
 
     body = (
-        '<div class="dash-header"><h2>Posts</h2>'
-        '<a href="/dashboard/editor" class="btn btn--primary">New post</a></div>'
+        '<div class="dash-header"><h2>Posts</h2>' + new_post_btn + "</div>"
         '<div style="display:flex;gap:var(--s-2);margin-bottom:var(--s-4);flex-wrap:wrap">'
         + filters_html
         + "</div>"
@@ -881,8 +902,7 @@ def render_settings(
     request: Any = None,
 ) -> str:
     """Render the settings page."""
-    auto_sel = " selected" if site.get("publish_mode") == "auto" else ""
-    review_sel = " selected" if site.get("publish_mode") == "require_review" else ""
+    has_site = bool(site.get("slug"))
 
     policy_list = ""
     if policies:
@@ -906,26 +926,63 @@ def render_settings(
             "<p style='color:var(--text-secondary);font:var(--text-body-sm)'>No policies configured.</p>"
         )
 
+    if has_site:
+        auto_sel = " selected" if site.get("publish_mode") == "auto" else ""
+        review_sel = " selected" if site.get("publish_mode") == "require_review" else ""
+        site_form = (
+            '<form method="post" action="/dashboard/settings/site" '
+            'style="display:flex;flex-direction:column;gap:var(--s-4)">'
+            '<div class="field"><label for="site_name">Site name</label>'
+            '<input type="text" id="site_name" name="site_name" value="'
+            + _esc(site.get("name", ""))
+            + '"></div>'
+            '<div class="field"><label for="base_url">Base URL</label>'
+            '<input type="text" id="base_url" name="base_url" value="' + _esc(site.get("base_url", "")) + '" '
+            'placeholder="https://example.com"></div>'
+            '<div class="field"><label for="publish_mode">Publish mode</label>'
+            '<select id="publish_mode" name="publish_mode">'
+            '<option value="auto"' + auto_sel + ">Auto (publish immediately)</option>"
+            '<option value="require_review"' + review_sel + ">Require review</option>"
+            "</select></div>"
+            '<input type="hidden" name="csrf_token" value="' + _esc(csrf_token) + '">'
+            '<button type="submit" class="btn btn--primary">Save settings</button>'
+            "</form>"
+        )
+    else:
+        site_form = (
+            '<div class="empty-state" style="padding:var(--s-6);text-align:center">'
+            '<div class="empty-state__mesh"></div>'
+            '<div class="empty-state__content">'
+            '<h3 style="font:var(--text-title-lg);margin:0 0 var(--s-2)">No site configured</h3>'
+            '<p style="font:var(--text-body-sm);color:var(--text-secondary);max-width:42ch;margin:0 auto var(--s-5)">'
+            "Create your first site to start publishing.</p>"
+            "</div></div>"
+            '<form method="post" action="/dashboard/settings/site/create" '
+            'style="display:flex;flex-direction:column;gap:var(--s-4)">'
+            '<div class="field"><label for="site_slug">Site slug</label>'
+            '<input type="text" id="site_slug" name="site_slug" '
+            'placeholder="my-blog" required '
+            'pattern="[a-z0-9]+(?:-[a-z0-9]+)*" '
+            'title="Lowercase, hyphen-separated: letters, digits and hyphens only"></div>'
+            '<div class="field"><label for="site_name">Site name</label>'
+            '<input type="text" id="site_name" name="site_name" placeholder="My Blog" required></div>'
+            '<div class="field"><label for="base_url">Base URL (optional)</label>'
+            '<input type="text" id="base_url" name="base_url" placeholder="https://example.com"></div>'
+            '<div class="field"><label for="publish_mode">Publish mode</label>'
+            '<select id="publish_mode" name="publish_mode">'
+            '<option value="auto">Auto (publish immediately)</option>'
+            '<option value="require_review">Require review</option>'
+            "</select></div>"
+            '<input type="hidden" name="csrf_token" value="' + _esc(csrf_token) + '">'
+            '<button type="submit" class="btn btn--primary">Create site</button>'
+            "</form>"
+        )
+
     body = (
         '<div class="dash-header"><h2>Settings</h2></div>'
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--s-4)">'
         '<div class="card">'
-        '<h3 style="font:var(--text-title-md);margin:0 0 var(--s-4)">Site</h3>'
-        '<form method="post" action="/dashboard/settings/site" '
-        'style="display:flex;flex-direction:column;gap:var(--s-4)">'
-        '<div class="field"><label for="site_name">Site name</label>'
-        '<input type="text" id="site_name" name="site_name" value="' + _esc(site.get("name", "")) + '"></div>'
-        '<div class="field"><label for="base_url">Base URL</label>'
-        '<input type="text" id="base_url" name="base_url" value="' + _esc(site.get("base_url", "")) + '" '
-        'placeholder="https://example.com"></div>'
-        '<div class="field"><label for="publish_mode">Publish mode</label>'
-        '<select id="publish_mode" name="publish_mode">'
-        '<option value="auto"' + auto_sel + ">Auto (publish immediately)</option>"
-        '<option value="require_review"' + review_sel + ">Require review</option>"
-        "</select></div>"
-        '<input type="hidden" name="csrf_token" value="' + _esc(csrf_token) + '">'
-        '<button type="submit" class="btn btn--primary">Save settings</button>'
-        "</form></div>"
+        '<h3 style="font:var(--text-title-md);margin:0 0 var(--s-4)">Site</h3>' + site_form + "</div>"
         '<div class="card">'
         '<h3 style="font:var(--text-title-md);margin:0 0 var(--s-4)">Content policies</h3>'
         + policy_list
