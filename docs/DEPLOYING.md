@@ -265,7 +265,32 @@ exported blog: 3 posts, 24 files (0 reused, 0 pruned) in 0.194s
 verify OK: 23 files matched manifest.json for /private/tmp/agentcms-export
 ```
 
-## 9. Known gaps at this revision
+## 9. Using published GHCR images (self-host)
+
+Starting with v0.3.0, every release publishes a **multi-arch image to GHCR**
+with SBOM and provenance attestation. Self-hosters should pin the **digest**
+(from the release output or `docker pull`) for an immutable, reproducible deploy.
+
+```text
+# 1. Pull the image (verifies provenance + fetches manifest for your arch)
+$ docker pull ghcr.io/smartalfred/agentcms:v0.3.0
+…
+Digest: sha256:abc123def456…
+
+# 2. Use the digest in your .env (NOT the tag — tags are mutable)
+AGENTCMS_IMAGE_TAG=ghcr.io/smartalfred/agentcms@sha256:abc123def456
+```
+
+The release workflow (`.github/workflows/release.yml`) prints the exact digest
+in its `document-digest` job output. Copy that line into your `.env` — the
+production guard (`app/config.py`) accepts digests and full semver tags
+(`v0.3.0`), but rejects `latest`, `local`, `dev`, or major.minor-only tags.
+
+If you prefer to build locally, `make docker-build` / `scripts/selfhost.sh`
+still work; they tag `agentcms:v0.3.0` from `pyproject.toml` which the guard
+also accepts.
+
+## 10. Known gaps at this revision
 
 - `scripts/deploy.sh` was verified end-to-end at this revision in both modes
   (see §5). Its one real limitation is per-line: `MIGRATE_JOB=0` refuses to

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Self-host AgentCMS in one command (#31 self-host DX, #35 turnkey fix).
 #
-#   ./scripts/selfhost.sh                    generate .env, validate, build, start
-#   ./scripts/selfhost.sh --setup-only       only write/fill .env (no Docker needed)
-#   ./scripts/selfhost.sh --env-file p.env   use a different env file
-#   ./scripts/selfhost.sh --tag img:v1.2.3   pin AGENTCMS_IMAGE_TAG explicitly
-#   ./scripts/selfhost.sh --no-build         reuse an already built image
+#   ./scripts/selfhost.sh                              generate .env, validate, build, start
+#   ./scripts/selfhost.sh --setup-only                 only write/fill .env (no Docker needed)
+#   ./scripts/selfhost.sh --env-file p.env             use a different env file
+#   ./scripts/selfhost.sh --tag ghcr.io/owner/agentcms@v0.3.0   pin AGENTCMS_IMAGE_TAG explicitly
+#   ./scripts/selfhost.sh --tag ghcr.io/owner/agentcms@sha256:abc123   pin to immutable digest
+#   ./scripts/selfhost.sh --no-build                   reuse an already built image
 #   DOMAIN=cms.example.com CADDY_EMAIL=me@example.com ./scripts/selfhost.sh
 #
 # Why the --env-file flag matters: `docker compose -f deploy/compose/...`
@@ -15,6 +16,9 @@
 #
 # The script is idempotent: an existing env file is kept, and only blank or
 # unsafe (development default) values are replaced.  It never deletes data.
+#
+# For production, use a published GHCR digest (see docs/DEPLOYING.md §9):
+#   ./scripts/selfhost.sh --tag ghcr.io/smartalfred/agentcms@sha256:abc123...
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
