@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from typing import Any
 from xml.dom import minidom
 
+import anyio
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
@@ -125,52 +126,97 @@ def _conditional_response(
     )
 
 
-def _get_post_or_404(
-    session: Session,
+def _get_post_or_404_sync(
     site_slug: str,
     slug: str,
     *,
     preview_token: str | None = None,
 ) -> tuple[Post, dict[str, Any], bool] | tuple[None, None, None]:
-    """Fetch a published post, handling redirects and preview.
+    """Fetch a published post, handling redirects and preview (sync version).
 
     Returns (post, post_dict, is_preview) or (None, None, None) if 404.
     """
-    redirect = check_redirect(session, site_slug, slug)
-    if redirect is not None:
-        new_post = get_published_post(session, site_slug, redirect.new_slug)
-        if new_post is None:
+    db = _open_db()
+    try:
+        redirect = check_redirect(db, site_slug, slug)
+        if redirect is not None:
+            new_post = get_published_post(db, site_slug, redirect.new_slug)
+            if new_post is None:
+                return None, None, None
+            return new_post, post_to_public_dict(new_post, site_slug), False
+
+        post = get_published_post(db, site_slug, slug)
+
+        if post is None and preview_token:
+            post_id = verify_preview_token(preview_token)
+            if post_id is not None:
+                from sqlalchemy.orm import joinedload
+
+                from app.models.post import Post as PostModel
+
+                post = (
+                    db.query(PostModel)
+                    .options(joinedload(PostModel.site))
+                    .filter(PostModel.id == post_id)
+                    .first()
+                )
+                if post is not None and post.site is not None and post.site.slug == site_slug:
+                    return post, post_to_public_dict(post, site_slug), True
+
+        if post is None:
             return None, None, None
-        return new_post, post_to_public_dict(new_post, site_slug), False
 
-    post = get_published_post(session, site_slug, slug)
-
-    if post is None and preview_token:
-        post_id = verify_preview_token(preview_token)
-        if post_id is not None:
-            from sqlalchemy.orm import joinedload
-
-            from app.models.post import Post as PostModel
-
-            post = (
-                session.query(PostModel)
-                .options(joinedload(PostModel.site))
-                .filter(PostModel.id == post_id)
-                .first()
-            )
-            if post is not None and post.site is not None and post.site.slug == site_slug:
-                return post, post_to_public_dict(post, site_slug), True
-
-    if post is None:
-        return None, None, None
-
-    return post, post_to_public_dict(post, site_slug), False
+        return post, post_to_public_dict(post, site_slug), False
+    finally:
+        db.close()
 
 
 def _open_db() -> Session:
     from app.db.session import get_db as _get_db
 
     return next(_get_db())
+
+
+async def _get_post_or_404(
+    site_slug: str,
+    slug: str,
+    *,
+    preview_token: str | None = None,
+) -> tuple[Post, dict[str, Any], bool] | tuple[None, None, None]:
+    """Fetch a published post, handling redirects and preview (async version).
+
+    Runs the synchronous DB operations in a thread pool to avoid blocking
+    the event loop.
+    """
+    return await anyio.to_thread.run_sync(
+        lambda: _get_post_or_404_sync(site_slug, slug, preview_token=preview_token)
+    )
+
+
+def _render_post_html_sync(
+    post: Post, site_slug: str, request: Request
+) -> tuple[str, str, str, dict[str, str]]:
+    """Render the post HTML (sync version for thread pool).
+
+    Returns (etag, body_html, site_name, resp_headers).
+    """
+    etag = compute_etag(post)
+    body_html = MarkdownRenderer().render_html(post.body_md)
+    base_url = f"{request.url.scheme}://{request.url.netloc}"
+    site_name = _site_name(_open_db(), site_slug)
+
+    html_content = render_post_page(
+        post=post_to_public_dict(post, site_slug),
+        body_html=body_html,
+        site_name=site_name,
+        site_slug=site_slug,
+        base_url=base_url,
+        is_preview=False,
+    )
+
+    resp_headers: dict[str, str] = {}
+
+    return etag, html_content, site_name, resp_headers
 
 
 # ---------------------------------------------------------------------------
@@ -549,27 +595,32 @@ def json_feed(site_slug: str, request: Request) -> Response:
 
 
 @router.get("/{site_slug}/{slug}")
-def post_page(
+async def post_page(
     site_slug: str,
     slug: str,
     request: Request,
     preview: str | None = Query(None),
 ) -> Response:
-    """Render a published post as a semantic HTML page."""
-    db = _open_db()
-    try:
-        _require_site(db, site_slug)
-        result = _get_post_or_404(db, site_slug, slug, preview_token=preview)
-        if result[0] is None or result[1] is None:
-            raise HTTPException(status_code=404, detail="Post not found.")
-        post = result[0]
-        post_dict = result[1]
-        is_preview = result[2]
+    """Render a published post as a semantic HTML page (async)."""
+    # Fetch post in thread pool to avoid blocking event loop
+    result = await _get_post_or_404(site_slug, slug, preview_token=preview)
+    if result[0] is None or result[1] is None:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    post = result[0]
+    post_dict = result[1]
+    is_preview = result[2]
 
+    # Render markdown and template in thread pool (CPU-bound, GIL-releasing via thread pool)
+    def _render() -> tuple[str, bytes, dict[str, str]]:
         etag = compute_etag(post)
         body_html = MarkdownRenderer().render_html(post.body_md)
         base_url = _get_base_url(request)
-        site_name = _site_name(db, site_slug)
+        # Need a DB session for _site_name
+        db = _open_db()
+        try:
+            site_name = _site_name(db, site_slug)
+        finally:
+            db.close()
 
         html_content = render_post_page(
             post=post_dict,
@@ -585,15 +636,17 @@ def post_page(
             resp_headers["X-Robots-Tag"] = "noindex"
             resp_headers["Cache-Control"] = "no-store"
 
-        return _conditional_response(
-            request,
-            etag,
-            post.updated_at,
-            body=html_content.encode(),
-            headers=resp_headers,
-        )
-    finally:
-        db.close()
+        return etag, html_content.encode(), resp_headers
+
+    etag, body_bytes, resp_headers = await anyio.to_thread.run_sync(_render)
+
+    return _conditional_response(
+        request,
+        etag,
+        post.updated_at,
+        body=body_bytes,
+        headers=resp_headers,
+    )
 
 
 @router.get("/{site_slug}")

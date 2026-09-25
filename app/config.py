@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     docs_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8000
+    # Number of uvicorn worker processes. In production, set to the number of
+    # CPU cores available to the container to scale past the single-core GIL
+    # ceiling (~145 page renders/s per worker).  Default is 1 for development.
+    workers: int = 1
     # ``NoDecode``: pydantic-settings would otherwise JSON-decode this complex
     # field before validation, and the documented empty value (``CORS_ORIGINS=``
     # in .env.example) is not valid JSON.  The validator below does the splitting.

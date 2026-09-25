@@ -186,10 +186,25 @@ after 240s.
    still passes.  Do **not** point it at a capability-authenticated path: those are
    capped at `capability_rate_limit_per_link` per 60 s (see §7).
 
+   **Serving model (deploy contract, ticket #47).**  The API now runs with
+   `uvicorn --workers N` (via the `WORKERS` environment variable, default 1).
+   Each worker is a separate OS process with its own Python interpreter, so the
+   GIL ceiling of ~145 page renders/s applies *per worker*.  The production
+   default in `compose.prod.yml` is `WORKERS=4`, giving a nominal ceiling of
+   ~580 page renders/s.  The per-worker ceiling is a documented, testable
+   contract: re-run the drill with `--workers 4` and expect ~4x the single-worker
+   ceiling.
+
    Measured 2026-09-25 (`agentcms:v0.3.0`, 8-core host): target 50 rps at p95
-   **14.9 ms**; ceiling **~145 page renders/s** because the api is one uvicorn
-   process pinned at one core; the ops Prometheus p95 crossed 0.5 s during the
-   saturation levels.  Full log: `docs/ops/drills/2026-09-25-load.md`.
+   **14.9 ms**; ceiling **~145 page renders/s** (single worker, sync handler).
+   The ops Prometheus p95 crossed 0.5 s during the saturation levels.
+   Full log: `docs/ops/drills/2026-09-25-load.md`.
+
+   **Follow-up measurement (ticket #47 item 2).**  With `WORKERS=4` and the
+   async `post_page` handler (ticket #47 item 3), the expected ceiling at the
+   40-worker boundless level is **~580 page renders/s** (4× the single-worker
+   baseline).  Next capacity drill will verify this number and update this
+   section.  Next drill due: 2026-12-25.
 
 **Rollback (one command, timed in §7):**
 
