@@ -82,7 +82,61 @@ def test_ci_workflow_runs_lint_and_tests_on_every_push() -> None:
     assert "pytest" in workflow
 
 
-def test_selfhost_script_generates_a_bootable_production_env(tmp_path: Path) -> None:
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker CLI not installed")
+def test_deploy_compose_validates_with_env_file() -> None:
+    """Regression test for #35: the documented deploy/compose/docker-compose.prod.yml
+    must parse when the repository-root .env is passed explicitly via --env-file.
+    """
+    if _run(["docker", "info"]).returncode != 0:
+        pytest.skip("docker daemon not running")
+
+    # Create a minimal .env with required production variables
+    env = dict(
+        os.environ,
+        POSTGRES_PASSWORD="ci-password",
+        SECRET_KEY="c" * 40,
+        AGENTCMS_IMAGE_TAG="agentcms:ci-test",
+        DOMAIN="localhost",
+    )
+
+    # Write a temporary .env file to simulate the documented quickstart
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
+        f.write("POSTGRES_PASSWORD=ci-password\n")
+        f.write("SECRET_KEY=" + "c" * 40 + "\n")
+        f.write("AGENTCMS_IMAGE_TAG=agentcms:ci-test\n")
+        f.write("DOMAIN=localhost\n")
+        f.write("POSTGRES_USER=agentcms\n")
+        f.write("POSTGRES_DB=agentcms\n")
+        env_file_path = f.name
+
+    try:
+        result = _run(
+            [
+                "docker",
+                "compose",
+                "--env-file",
+                env_file_path,
+                "-f",
+                "deploy/compose/docker-compose.prod.yml",
+                "config",
+                "--quiet",
+            ],
+            env=env,
+        )
+        assert result.returncode == 0, (
+            f"deploy/compose/docker-compose.prod.yml failed to parse with --env-file: {result.stderr}"
+        )
+    finally:
+        import os as _os
+
+        _os.unlink(env_file_path)
+
+
+def test_selfhost_script_generates_a_bootable_production_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`make selfhost` is the documented deploy path (#35): prove it writes an
     .env the app accepts with APP_ENV=production, without needing Docker."""
     from app.config import Settings
@@ -92,8 +146,15 @@ def test_selfhost_script_generates_a_bootable_production_env(tmp_path: Path) -> 
     assert os.access(script, os.X_OK), "scripts/selfhost.sh must be executable"
 
     env = dict(os.environ)
-    for name in ("APP_ENV", "DATABASE_URL", "SECRET_KEY", "AGENTCMS_IMAGE_TAG",
-                 "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"):
+    for name in (
+        "APP_ENV",
+        "DATABASE_URL",
+        "SECRET_KEY",
+        "AGENTCMS_IMAGE_TAG",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DB",
+    ):
         env.pop(name, None)
 
     env_file = tmp_path / "prod.env"
@@ -106,6 +167,8 @@ def test_selfhost_script_generates_a_bootable_production_env(tmp_path: Path) -> 
         "a blank tag makes the app refuse to boot when APP_ENV=production"
     )
 
+    # Clear APP_ENV from the current process env so Settings reads it from the .env file
+    monkeypatch.delenv("APP_ENV", raising=False)
     settings = Settings(_env_file=env_file)
     assert settings.app_env == "production"
     assert settings.agentcms_image_tag
