@@ -201,9 +201,20 @@ fi
 log_info "Post visible in posts.json (${PUBLIC_POST_COUNT} total)"
 
 # ---- 9. Verify embed script is served correctly ----
+# A browser fetches this asset with GET, so assert it with GET.  `curl -I` sends
+# HEAD, and FastAPI's @router.get does not register HEAD -- the documented surface
+# answers 405 and the assertion then reads the *error* body's content-type
+# (application/problem+json) as its verdict.  That is how the first CI run of the
+# self-host E2E job failed, so the status code is asserted separately.
 log_info "Verifying embed script endpoint..."
-SCRIPT_RESPONSE=$(curl -s -I "${EMBED_SCRIPT_URL}")
-CONTENT_TYPE=$(echo "${SCRIPT_RESPONSE}" | grep -i "content-type:" | head -1 | cut -d' ' -f2- | tr -d '\r')
+SCRIPT_HEADERS=$(curl -s -D - -o /dev/null "${EMBED_SCRIPT_URL}")
+SCRIPT_CODE=$(printf '%s' "${SCRIPT_HEADERS}" | head -1 | awk '{print $2}')
+if [[ "${SCRIPT_CODE}" != "200" ]]; then
+    log_error "Embed script endpoint returned HTTP ${SCRIPT_CODE} (expected 200)"
+    printf '%s\n' "${SCRIPT_HEADERS}" >&2
+    exit 1
+fi
+CONTENT_TYPE=$(printf '%s' "${SCRIPT_HEADERS}" | { grep -i "^content-type:" || true; } | head -1 | cut -d' ' -f2- | tr -d '\r')
 if [[ "${CONTENT_TYPE}" != *"javascript"* ]]; then
     log_error "Embed script has wrong content-type: ${CONTENT_TYPE}"
     exit 1
@@ -253,7 +264,7 @@ fi
 
 # ---- 12. Verify CORS headers on embed endpoint ----
 log_info "Verifying CORS on embed endpoint..."
-CORS_RESPONSE=$(curl -s -I -H "Origin: http://localhost:3000" \
+CORS_RESPONSE=$(curl -s -D - -o /dev/null -H "Origin: http://localhost:3000" \
     -H "Access-Control-Request-Method: GET" \
     -X OPTIONS "${BASE_URL}/embed/v1/posts")
 ACCESS_CONTROL_ALLOW_ORIGIN=$(echo "${CORS_RESPONSE}" | grep -i "access-control-allow-origin:" | head -1 | cut -d' ' -f2- | tr -d '\r')
