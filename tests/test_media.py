@@ -1103,3 +1103,74 @@ class TestEdgeCases:
         )
         assert resp.status_code == 201
         assert resp.json()["content_type"] == "image/png"
+
+
+class TestPresignedPutAgainstSelfHostedS3:
+    """A presigned PUT must be signed for the host it is actually sent to.
+
+    The signature used to be computed over a hard-coded
+    ``<bucket>.s3.<region>.amazonaws.com`` host while the URL pointed at the
+    configured endpoint, and the bucket was missing from the path.  Every
+    self-hosted S3 (MinIO, Ceph, R2) therefore answered ``403
+    SignatureDoesNotMatch`` and the off-site half of the backup story could
+    never work — found by the 2026-09-25 restore drill (#39).
+    """
+
+    def _settings(self, monkeypatch, endpoint: str) -> None:
+        monkeypatch.setenv("S3_ENDPOINT_URL", endpoint)
+        monkeypatch.setenv("S3_ACCESS_KEY_ID", "drillkey")
+        monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "drillsecret")
+        monkeypatch.setenv("S3_BUCKET", "agentcms-backups")
+        from app.config import reset_settings_cache
+
+        reset_settings_cache()
+
+    def test_path_style_endpoint_keeps_bucket_in_the_path(self, monkeypatch) -> None:
+        from urllib.parse import urlparse
+
+        from app.services.media import generate_presigned_put_url
+
+        self._settings(monkeypatch, "http://127.0.0.1:59000")
+        url, headers, expires = generate_presigned_put_url(
+            "20260925-120918.dump.enc", "application/octet-stream"
+        )
+
+        parsed = urlparse(url)
+        assert parsed.netloc == "127.0.0.1:59000", url
+        assert parsed.path == "/agentcms-backups/20260925-120918.dump.enc", url
+        assert headers["Content-Type"] == "application/octet-stream"
+        assert expires > 0
+
+    def test_virtual_host_endpoint_keeps_bucket_out_of_the_path(self, monkeypatch) -> None:
+        from urllib.parse import urlparse
+
+        from app.services.media import generate_presigned_put_url
+
+        self._settings(monkeypatch, "https://agentcms-backups.s3.example.com")
+        url, _headers, _expires = generate_presigned_put_url("media/a/b.png", "image/png")
+
+        parsed = urlparse(url)
+        assert parsed.netloc == "agentcms-backups.s3.example.com", url
+        assert parsed.path == "/media/a/b.png", url
+
+    def test_signature_follows_the_endpoint_being_contacted(self, monkeypatch) -> None:
+        """Two different endpoints must not yield the same signature.
+
+        Pre-fix the endpoint never entered the canonical request, so a
+        signature minted for AWS was replayed against MinIO.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        from app.services.media import generate_presigned_put_url
+
+        self._settings(monkeypatch, "http://127.0.0.1:59000")
+        first = generate_presigned_put_url("media/a/b.png", "image/png")[0]
+
+        self._settings(monkeypatch, "http://minio.internal:9000")
+        second = generate_presigned_put_url("media/a/b.png", "image/png")[0]
+
+        def sig(url: str) -> str:
+            return parse_qs(urlparse(url).query)["X-Amz-Signature"][0]
+
+        assert sig(first) != sig(second)
+        assert "host%3Aminio.internal" in second or "minio.internal" in second

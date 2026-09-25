@@ -30,6 +30,7 @@ import hmac
 import logging
 import re
 import time
+import urllib.parse
 import uuid
 from datetime import UTC, datetime
 from io import BytesIO
@@ -532,8 +533,21 @@ def generate_presigned_put_url(
     # Real S3 presigned PUT URL
     expires_in = expires_in_minutes * 60
     region = settings.s3_region
-    endpoint = settings.s3_endpoint_url or f"https://{settings.s3_bucket}.s3.{region}.amazonaws.com"
-    url = f"{endpoint}/{storage_key}"
+    endpoint = (settings.s3_endpoint_url or "").rstrip("/")
+    if endpoint:
+        # Self-hosted / S3-compatible endpoints (MinIO, Ceph, R2, localstack) are
+        # addressed path-style: the bucket is a path segment on the endpoint's own
+        # host. Only when the endpoint's host already starts with the bucket
+        # (virtual-host style) does the bucket stay out of the path. Signing a host
+        # we never contact is what made MinIO answer "403 SignatureDoesNotMatch",
+        # so the off-site copy of every backup failed (see tests/test_media.py).
+        host_label = urllib.parse.urlparse(endpoint).netloc.split(":")[0].split(".")[0]
+        if host_label == settings.s3_bucket:
+            url = f"{endpoint}/{storage_key}"
+        else:
+            url = f"{endpoint}/{settings.s3_bucket}/{storage_key}"
+    else:
+        url = f"https://{settings.s3_bucket}.s3.{region}.amazonaws.com/{storage_key}"
 
     # AWS Signature V4 for PUT
     now = datetime.now(UTC)
@@ -542,7 +556,8 @@ def generate_presigned_put_url(
     credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
 
     # Canonical request
-    canonical_uri = f"/{storage_key}"
+    parsed = urllib.parse.urlparse(url)
+    canonical_uri = parsed.path
     canonical_querystring = "X-Amz-Algorithm=AWS4-HMAC-SHA256"
     canonical_querystring += f"&X-Amz-Credential={settings.s3_access_key_id}%2F{credential_scope}"
     canonical_querystring += f"&X-Amz-Date={amz_date}"
@@ -550,7 +565,7 @@ def generate_presigned_put_url(
     canonical_querystring += "&X-Amz-SignedHeaders=content-type%3Bhost"
 
     payload_hash = "UNSIGNED-PAYLOAD"
-    host = f"{settings.s3_bucket}.s3.{region}.amazonaws.com"
+    host = parsed.netloc
     canonical_headers = f"content-type:{content_type}\nhost:{host}\n"
     signed_headers = "content-type;host"
 
