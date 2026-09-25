@@ -155,7 +155,9 @@ ALERTS: dict[str, AlertRule] = {
         name="ContainerRestart",
         severity="page",
         summary="a stack container restarted (RestartCount increased) within the last 10 minutes",
-        promql='changes(agentcms_container_restart_count{job="docker-exporter"}[10m]) > 0',
+        promql=(
+            'time() - agentcms_container_last_restart_observed_timestamp_seconds{job="docker-exporter"} < 600'
+        ),
         expr_for="0s",
         fires=lambda s: s.container_restarts > 0,
     ),

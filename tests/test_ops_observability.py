@@ -177,10 +177,42 @@ class TestDockerExporter:
         assert "ws3-drill-api-1" in text
         assert "other-api-1" not in text
 
+    def test_a_restart_that_settles_between_scrapes_is_still_observed(self) -> None:
+        """The rule must not depend on catching a crash loop mid-flight.
+
+        A container that restarted 3x in 12s and then settled is invisible to
+        ``changes(RestartCount[10m])`` at a 15s scrape interval (measured
+        2026-09-25), so the exporter records *when* it saw the increase.
+        """
+        seen: dict[str, tuple[int, float]] = {}
+        docker_exporter.observe_restarts([self.container(restarts=0)], seen, now=100.0)
+        docker_exporter.observe_restarts([self.container(restarts=3)], seen, now=105.0)
+        text = docker_exporter.render_metrics([self.container(restarts=3)], observed=seen)
+        assert (
+            "agentcms_container_last_restart_observed_timestamp_seconds"
+            '{container="ws3-drill-api-1",project="ws3-drill",service="api"} 105' in text
+        )
+        # A container that has never restarted emits nothing, so the rule is silent.
+        assert "last_restart_observed_timestamp_seconds{" not in docker_exporter.render_metrics(
+            [self.container()]
+        )
+
+    def test_a_container_already_restarted_when_watching_began_is_not_silent(self) -> None:
+        seen: dict[str, tuple[int, float]] = {}
+        docker_exporter.observe_restarts([self.container(restarts=2)], seen, now=7.0)
+        assert seen["ws3-drill-api-1"] == (2, 7.0)
+
     def test_rules_only_reference_metrics_the_exporter_emits(self) -> None:
-        emitted = docker_exporter.render_metrics([self.container(restarts=1)])
+        emitted = docker_exporter.render_metrics(
+            [self.container(restarts=1)],
+            observed={"ws3-drill-api-1": (1, 1790344000.0)},
+        )
         for rule in ALERTS.values():
-            for metric in ("agentcms_container_restart_count", "agentcms_container_last_exit_code"):
+            for metric in (
+                "agentcms_container_restart_count",
+                "agentcms_container_last_exit_code",
+                "agentcms_container_last_restart_observed_timestamp_seconds",
+            ):
                 if metric in rule.promql:
                     assert metric in emitted, f"{rule.name} references {metric}, which is never emitted"
 

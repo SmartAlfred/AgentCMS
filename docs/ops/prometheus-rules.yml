@@ -52,7 +52,7 @@ groups:
         labels: { severity: page }
         annotations: { summary: "/readyz is not 200: a critical dependency (database/object store) is down" }
       - alert: ContainerRestart
-        expr: changes(agentcms_container_restart_count{job="docker-exporter"}[10m]) > 0
+        expr: time() - agentcms_container_last_restart_observed_timestamp_seconds{job="docker-exporter"} < 600
         for: 0s
         labels: { severity: page }
         annotations: { summary: "a stack container restarted (RestartCount increased) within the last 10 minutes" }
