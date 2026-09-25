@@ -561,3 +561,43 @@ psql -h 127.0.0.1 -p 50226 -U postgres -d agentcms -c "SELECT version_num FROM a
 Migrations are forward-only; the DB is migrated by the gated `migrate` job
 *before* new code cutover, so old code still works against the new schema
 (additive DDL only). Downgrades are not part of the rollback path.
+## Measured backup / restore drill — 2026-09-25
+
+Numbers below come from a real drill on a throwaway stack (`-p ws3-drill`, prod compose file, image
+`agentcms:v0.3.0`, PostgreSQL 16, MinIO as the off-site store), not from a policy statement.
+Full transcript: [`docs/ops/drills/2026-09-25-backup-restore.md`](drills/2026-09-25-backup-restore.md).
+
+| Measurement | Value |
+| --- | --- |
+| **RPO** (data that would be lost) | **13 s** — newest backup `20260925-121211.dump.enc` completed 12:12:11Z, the failure hit 12:12:24Z. The post written at 12:12:23Z is genuinely absent after the restore (404). |
+| **RTO** (failure → serving again) | **54 s** — 12:12:24Z → 12:13:18Z. Off-site fetch 8 s, Postgres first-boot init 9 s, 23 s lost to a restarted attempt (see below), clean restore 1.1 s, API serving 4 s. |
+| Restore command itself | 1.1 s for a 71 KB dump (schema + 4 posts) |
+| Off-site copy integrity | sha256 `d00d6a2e…` identical locally and in `s3://agentcms-backups` |
+
+**The disaster-recovery sequence that works** (the drill restored *only* from the off-site object; the local
+backup directory was moved away before the restore):
+
+```bash
+# 1. fetch the newest encrypted dump from the object store
+# 2. start Postgres and WAIT until it is past its first-boot init restart
+docker compose -p <stack> up -d db
+# 3. restore into a clean target — the dump carries the schema and alembic_version
+psql "$DSN" -c 'drop schema public cascade; create schema public;'
+python -m scripts.restore --dump <fetched>.dump.enc --target-url "$DATABASE_URL"
+# 4. then let migrate/api come up; `migrate` is a no-op because alembic_version came back with the dump
+docker compose -p <stack> up -d
+```
+
+Two operational traps the drill exposed:
+
+* **Do not run the restore while a fresh Postgres volume is still initialising.** A restore issued 1 s after
+  `up -d db` lost the connection mid-way (`server closed the connection unexpectedly`); the container passed its
+  `pg_isready` healthcheck during the init-phase restart. Wait for the *second* successful healthcheck, or retry —
+  the restore is idempotent once the target is clean.
+* **Restore before `migrate`, or reset `public` first.** On a fresh volume `migrate` creates all 18 tables, and a
+  dump replayed on top of an existing schema fails (the dump is not restored with `--clean`).
+
+Wrong-passphrase, truncated-dump and missing-dump cases were exercised too: exit 1, exit 1 and exit 2 respectively,
+with the live database left untouched — a restore cannot half-succeed silently.
+
+*Next drill due: 2026-12-25 (quarterly), or after any change to the backup, retention or S3 configuration.*
