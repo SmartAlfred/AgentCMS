@@ -36,7 +36,7 @@ router.include_router(search_router)
 router.include_router(sites_router)
 router.include_router(tags_router)
 router.include_router(assets_router)
-router.include_router(webhooks_router)
+router.include_router(webhooks_router, dependencies=[Depends(require_admin)])
 router.include_router(events_router)
 router.include_router(export_router)
 

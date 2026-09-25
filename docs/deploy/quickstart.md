@@ -79,9 +79,21 @@ curl -X POST https://your-domain.com/v1/sites \
 # -> {"id":"...","slug":"blog","name":"My Blog","publish_mode":"auto","created_at":"..."}
 ```
 
-Mint `YOUR_ADMIN_TOKEN` with `POST /v1/admin/tokens`. **Until #44 lands, that call is
-unauthenticated — do not expose a fresh instance to the internet before you have minted
-your first token.**
+Mint `YOUR_ADMIN_TOKEN` with `POST /v1/admin/tokens`, authenticated with the
+`ADMIN_TOKEN` bootstrap secret that `scripts/selfhost.sh` generated into your `.env`:
+
+```bash
+curl -X POST https://your-domain.com/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"admin","scopes":["*:read"]}'
+# -> {"token":"acms_...","label":"admin",...}
+```
+
+Every `/v1/admin/*` route is closed to anonymous callers (#44). `ADMIN_TOKEN` is a
+bootstrap secret, not a stored token — it lives in `.env`, is never shown in the
+dashboard, and can be rotated any time from
+[configuration.md](configuration.md#admin-surface).
 
 Then open `https://your-domain.com/dashboard`; it now shows your site.
 

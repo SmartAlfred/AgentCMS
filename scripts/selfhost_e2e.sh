@@ -209,6 +209,13 @@ embed_token="$(printf '%s\n' "$seed_out" | tr -d '\r' | sed -n 's|.*Embed token 
 # The embed surface takes a read-only token; export it so the smoke script uses it
 # for /embed/v1/posts and asserts a write token is refused.
 export SMOKE_EMBED_TOKEN="$embed_token"
+# #44: the whole /v1/admin/* surface needs the ADMIN_TOKEN bootstrap secret that
+# scripts/selfhost.sh wrote into .env.  A curl from this host to the published port
+# is NOT a loopback peer (docker forwards it from the bridge gateway), so the smoke
+# script has to send it explicitly -- read it from .env the way an operator would.
+bootstrap_admin_token="$(sed -n 's/^ADMIN_TOKEN=//p' "${ENV_FILE}" | tail -1 | tr -d '\r"')"
+[ -n "$bootstrap_admin_token" ] || die "scripts/selfhost.sh wrote no ADMIN_TOKEN into ${ENV_FILE}: the admin surface (token mint, audit) cannot be exercised (#44)"
+export SMOKE_ADMIN_TOKEN="$bootstrap_admin_token"
 # --- 7. API roundtrip: capability link -> publish post -> public page ---------
 
 log "API roundtrip (minted capability link -> publish post -> public page)"

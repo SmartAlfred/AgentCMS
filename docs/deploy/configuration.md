@@ -16,6 +16,7 @@ start in production if misconfigured.
 |----------|-------------------|---------|---------------|-------------|
 | `APP_ENV` | Yes | No | `development` | Runtime mode: `development`, `test`, `production` |
 | `SECRET_KEY` | **Yes** | **Yes** | **No** | Token signing key (≥32 chars) |
+| `ADMIN_TOKEN` | **Yes** | **Yes** | **No** | Bootstrap secret for the whole `/v1/admin/*` surface, sent as `X-Admin-Token` (≥32 chars) |
 | `DATABASE_URL` | **Yes** | **Yes** | **No** | PostgreSQL connection string |
 | `POSTGRES_PASSWORD` | **Yes** | **Yes** | **No** | Postgres password (for compose) |
 | `CORS_ORIGINS` | No | No | `""` (empty) | Comma-separated API CORS origins |
@@ -36,6 +37,12 @@ start in production if misconfigured.
 ---
 
 ## Variable Details
+
+### Admin surface
+
+| Variable | Description |
+|----------|-------------|
+| `ADMIN_TOKEN` | **Required in production, ≥32 chars.** The bootstrap secret for every `/v1/admin/*` route (`X-Admin-Token: <ADMIN_TOKEN>`). It is a *bootstrap* secret, not a stored token: `scripts/selfhost.sh --setup-only` generates one into `.env`, and rotating it costs nothing (mint your long-lived tokens first, then rotate). A valid dashboard session cookie is also accepted, but only for reads -- cookie-authenticated POST/DELETE additionally require the dashboard CSRF token (`X-CSRF-Token`). Bearer `acms_` tokens need the operator scope `*:read`. |
 
 ### Runtime
 

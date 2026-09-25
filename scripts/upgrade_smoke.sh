@@ -78,7 +78,14 @@ wait_for_health() {
 
 create_admin_token() {
   local token
+  # #44: the mint is authenticated by the ADMIN_TOKEN bootstrap secret (exported
+  # from .env above, or handed in as SMOKE_ADMIN_TOKEN).
+  if [[ -z "${SMOKE_ADMIN_TOKEN:-}" ]]; then
+    log_error "SMOKE_ADMIN_TOKEN is required: POST /v1/admin/tokens needs the ADMIN_TOKEN bootstrap secret (#44)"
+    return 1
+  fi
   token=$(curl -fsS -X POST "${BASE_URL}/v1/admin/tokens" \
+    -H "X-Admin-Token: ${SMOKE_ADMIN_TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{"label":"upgrade-smoke","scopes":["posts:read","posts:write","posts:publish","assets:write","sites:write"]}' \
     | jq -r '.token // empty')

@@ -433,6 +433,9 @@ fi
 """
 
 
+ADMIN_BOOTSTRAP_SECRET = "bootstrap-admin-secret-0000000000000001"
+
+
 def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None:
     """Regression (#44): a missing CORS header must not kill the smoke run.
 
@@ -451,6 +454,7 @@ def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None
     curl.chmod(0o755)
 
     env = {**os.environ, "PATH": f"{stub_bin}{os.pathsep}{os.environ['PATH']}"}
+    env["SMOKE_ADMIN_TOKEN"] = ADMIN_BOOTSTRAP_SECRET
     proc = _run(
         [
             str(REPO_ROOT / "scripts" / "deploy_smoke.sh"),
@@ -690,3 +694,52 @@ def test_the_capability_token_alphabet_is_base64url() -> None:
     assert re.fullmatch(r"cap_blog_[A-Za-z0-9_-]+", token), token
     alphabet = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
     assert set(token) <= alphabet | {"c", "a", "p", "_", "b", "l", "o", "g"}
+
+
+# --- #44: the admin surface is closed, so the smoke scripts must authenticate ---
+
+
+def test_deploy_smoke_authenticates_the_admin_mint() -> None:
+    """#44: POST /v1/admin/tokens needs the bootstrap secret -- no anonymous fallback.
+
+    A curl from the host to a published port is not a loopback peer, so a smoke
+    script that probed the mint unauthenticated would report the guard as a broken
+    product.  It must send ``X-Admin-Token`` and must stop before probing when the
+    secret is missing.
+    """
+    body = (REPO_ROOT / "scripts" / "deploy_smoke.sh").read_text()
+    block = body.split("# ---- 3. Create admin token ----", 1)[1][:1500]
+
+    assert "X-Admin-Token: ${ADMIN_BOOTSTRAP_TOKEN}" in block, block
+    assert "No admin bootstrap secret" in block, block
+    assert "exit 1" in block, "a missing secret must be fatal, not a warning"
+    assert "--admin-token" in body
+
+
+def test_upgrade_smoke_authenticates_the_admin_mint() -> None:
+    """The upgrade path mints a token too, so it needs the same secret (#44)."""
+    body = (REPO_ROOT / "scripts" / "upgrade_smoke.sh").read_text()
+    mint = body.split("create_admin_token()", 1)[1].split("\n}", 1)[0]
+
+    assert "X-Admin-Token: ${SMOKE_ADMIN_TOKEN}" in mint, mint
+    assert "log_error" in mint and "return 1" in mint, mint
+    assert "/v1/admin/tokens" in mint
+
+
+def test_selfhost_e2e_hands_the_bootstrap_secret_to_the_smoke_script() -> None:
+    """The E2E must read ADMIN_TOKEN out of the generated .env (it cannot be baked in)."""
+    body = (REPO_ROOT / "scripts" / "selfhost_e2e.sh").read_text()
+
+    assert "export SMOKE_ADMIN_TOKEN=" in body
+    assert "^ADMIN_TOKEN=" in body, "the bootstrap secret must come from the generated .env"
+    marker = body.index("export SMOKE_ADMIN_TOKEN=")
+    assert "die " in body[max(0, marker - 400) : marker], (
+        "a missing ADMIN_TOKEN must abort the E2E rather than skip the admin assertions"
+    )
+
+
+def test_selfhost_setup_generates_an_admin_token() -> None:
+    """A self-hoster must never have to invent the bootstrap secret by hand."""
+    body = (REPO_ROOT / "scripts" / "selfhost.sh").read_text()
+    assert "ADMIN_TOKEN" in body
+    assert "openssl rand" in body or "secrets" in body, "ADMIN_TOKEN must be generated"

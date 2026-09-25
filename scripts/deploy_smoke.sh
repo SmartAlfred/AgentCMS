@@ -3,7 +3,10 @@
 #
 # Runs after `docker compose -f deploy/compose/docker-compose.prod.yml up -d`:
 # 1. Waits for /healthz and /readyz to report healthy
-# 2. Asserts the site named by --site-slug exists (#44: nothing can create one
+# 2. Mints an admin token with the ADMIN_TOKEN bootstrap secret (#44: POST
+#    /v1/admin/tokens is no longer anonymous, so --admin-token / SMOKE_ADMIN_TOKEN
+#    is required -- there is no fallback)
+# 3. Asserts the site named by --site-slug exists (#44: nothing can create one
 #    over HTTP yet, so scripts/selfhost_e2e.sh seeds it first)
 # 3. Uses the capability token handed in via --capability-token /
 #    SMOKE_CAPABILITY_TOKEN (#44: no API mints cap_ tokens yet; `make seed` does)
@@ -34,6 +37,7 @@ READY_URL="${BASE_URL}/readyz"
 EMBED_SCRIPT_URL="${BASE_URL}/embed/v1/agentcms.js"
 MAX_WAIT="${MAX_WAIT:-180}"  # seconds
 SITE_SLUG="${SMOKE_SITE_SLUG:-blog}"
+ADMIN_BOOTSTRAP_TOKEN="${SMOKE_ADMIN_TOKEN:-}"   # the ADMIN_TOKEN bootstrap secret (#44); no anonymous fallback
 CAP_TOKEN="${SMOKE_CAPABILITY_TOKEN:-}"
 EMBED_TOKEN="${SMOKE_EMBED_TOKEN:-}"   # read-only (posts:read) token; the embed surface refuses write tokens
 EMBED_ORIGINS="${SMOKE_EMBED_ORIGINS:-}"   # the allowlist this stack was deployed with (empty = deny-all)
@@ -60,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --site-slug)
             SITE_SLUG="$2"
+            shift 2
+            ;;
+        --admin-token)
+            ADMIN_BOOTSTRAP_TOKEN="$2"
             shift 2
             ;;
         --capability-token)
@@ -121,8 +129,17 @@ while true; do
 done
 
 # ---- 3. Create admin token ----
-log_info "Creating admin token..."
+# #44: POST /v1/admin/tokens is authenticated by the ADMIN_TOKEN bootstrap secret.
+# Fail loudly rather than probing the endpoint unauthenticated: a 401 here means
+# "you forgot the secret", not "the product is broken".
+if [[ -z "${ADMIN_BOOTSTRAP_TOKEN}" ]]; then
+    log_error "No admin bootstrap secret: pass --admin-token or set SMOKE_ADMIN_TOKEN"
+    log_error "(it is the ADMIN_TOKEN written into .env by scripts/selfhost.sh; #44 made it mandatory)"
+    exit 1
+fi
+log_info "Creating admin token (authenticated with X-Admin-Token)..."
 ADMIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/admin/tokens" \
+    -H "X-Admin-Token: ${ADMIN_BOOTSTRAP_TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{"label":"smoke-test","scopes":["posts:read","posts:write","posts:publish","assets:write","sites:write"]}')
 

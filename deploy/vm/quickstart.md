@@ -200,10 +200,12 @@ docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml run --r
 ### Option B: Via API
 
 ```bash
-# Get admin token (one-time)
+# Mint an admin token (one-time).  POST /v1/admin/tokens is authenticated by the
+# ADMIN_TOKEN bootstrap secret from .env (export it: set -a; . ./.env; set +a).
 ADMIN_TOKEN=$(curl -s -X POST https://cms.example.com/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"label":"bootstrap","scopes":["posts:read","posts:write","posts:publish","assets:write"]}' | jq -r .plaintext)
+  -d '{"label":"bootstrap","scopes":["posts:read","posts:write","posts:publish","assets:write"]}' | jq -r .token)
 
 # Create site
 curl -X POST https://cms.example.com/v1/sites \

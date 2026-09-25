@@ -14,6 +14,7 @@ again without the guard).
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pytest
 from app.api.admin_auth import ADMIN_SCOPE, require_admin
@@ -79,9 +80,49 @@ def prod_client(
         yield client
 
 
+def _admin_route_contexts(app: Any) -> list[Any]:
+    """Every mounted ``/v1/admin*`` route, resolved the way FastAPI resolves them.
+
+    Iterating ``app.routes`` is silently vacuous under FastAPI 0.141:
+    ``include_router`` appends an opaque ``_IncludedRouter`` wrapper, so the app
+    keeps reporting 13 top-level routes and *zero* ``/v1/admin`` paths, and a sweep
+    built on it passes against an ungated tree -- the defect that held #44 back.
+
+    ``_IncludedRouter.effective_route_contexts()`` is the library's own resolution:
+    it applies the include-time prefix *and* the include-time dependencies to every
+    child route, so the resolved context carries the merged ``dependant``.  It also
+    surfaces routers mounted with ``include_in_schema=False`` (rate limits, kill
+    switches), which ``app.openapi()`` omits.
+    """
+    found: list[Any] = []
+    for route in getattr(app, "routes", ()):
+        resolve = getattr(route, "effective_route_contexts", None)
+        if resolve is None:
+            if getattr(route, "path", "").startswith("/v1/admin"):
+                found.append(route)
+            continue
+        found.extend(ctx for ctx in resolve() if getattr(ctx, "path", "").startswith("/v1/admin"))
+    return found
+
+
+def _carries_admin_guard(context: Any) -> bool:
+    """True when ``require_admin`` is in this route's resolved dependency tree."""
+    dependant = getattr(context, "dependant", None)
+    if dependant is None:
+        dependant = getattr(getattr(context, "original_route", None), "dependant", None)
+    if dependant is None:
+        return False
+
+    def walk(dependency: Any) -> bool:
+        if getattr(dependency, "call", None) is require_admin:
+            return True
+        return any(walk(child) for child in getattr(dependency, "dependencies", ()))
+
+    return any(walk(dep) for dep in getattr(dependant, "dependencies", ()))
+
+
 def _admin_paths(client: TestClient) -> list[str]:
-    paths = {route.path for route in client.app.routes if getattr(route, "path", "").startswith("/v1/admin")}
-    return sorted(_PATH_PARAM.sub(_UUID, path) for path in paths)
+    return sorted({_PATH_PARAM.sub(_UUID, ctx.path) for ctx in _admin_route_contexts(client.app)})
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +144,7 @@ def test_admin_tokens_post_without_credentials_is_refused(prod_client: TestClien
 def test_every_admin_route_refuses_anonymous_requests(prod_client: TestClient) -> None:
     """Sweep: no admin route may answer an unauthenticated caller with success."""
     paths = _admin_paths(prod_client)
-    assert len(paths) >= 15, f"only found {len(paths)} admin routes: {paths}"
+    assert len(paths) >= 20, f"only found {len(paths)} admin routes: {paths}"
 
     leaks: dict[str, list[str]] = {}
     for path in paths:
@@ -114,6 +155,36 @@ def test_every_admin_route_refuses_anonymous_requests(prod_client: TestClient) -
             leaks.setdefault(path, []).append(f"{method} -> {response.status_code}")
 
     assert not leaks, f"unauthenticated callers got a non-refusal from: {leaks}"
+
+    # Positive control: the sweep must be failing on *credentials*, not refusing
+    # everything unconditionally.  The same route answers the bootstrap secret.
+    control = prod_client.post(
+        "/v1/admin/tokens",
+        json={"label": "control", "scopes": ["posts:read"]},
+        headers={"X-Admin-Token": PROD_ADMIN_TOKEN},
+    )
+    assert control.status_code in {200, 201}, control.text
+
+
+def test_admin_surface_discovery_is_not_vacuous(prod_client: TestClient) -> None:
+    """Guard the guard: the sweeps must see the real, mounted admin surface.
+
+    Regression for the defect that held this ticket back: under FastAPI 0.141
+    discovery through ``app.routes`` yielded 0 admin paths, so the structural test
+    passed against the *unfixed* tree.  Cross-check the recursion against the
+    independent OpenAPI schema, and require the schema-hidden routers as well.
+    """
+    mounted = {_PATH_PARAM.sub(_UUID, ctx.path) for ctx in _admin_route_contexts(prod_client.app)}
+    schema = {
+        _PATH_PARAM.sub(_UUID, path)
+        for path in prod_client.app.openapi()["paths"]
+        if path.startswith("/v1/admin")
+    }
+
+    assert len(mounted) >= 20, f"discovered only {len(mounted)} admin paths: {sorted(mounted)}"
+    assert schema <= mounted, f"mounted routes missing from discovery: {sorted(schema - mounted)}"
+    hidden = {p for p in mounted if "/rate-limits" in p or "/kill-switches" in p}
+    assert len(hidden) >= 2, f"the schema-hidden admin routers were not discovered: {sorted(mounted)}"
 
 
 def test_forwarded_for_header_does_not_grant_loopback_trust(prod_client: TestClient) -> None:
@@ -253,22 +324,12 @@ def test_operator_scoped_token_can_mint_tokens(prod_client: TestClient) -> None:
 
 
 def test_every_admin_route_carries_the_guard(prod_client: TestClient) -> None:
-    def guarded(route: object) -> bool:
-        dependant = getattr(route, "dependant", None)
-        if dependant is None:
-            return False
-
-        def walk(dependency: object) -> bool:
-            if getattr(dependency, "call", None) is require_admin:
-                return True
-            return any(walk(child) for child in getattr(dependency, "dependencies", ()))
-
-        return any(walk(dep) for dep in dependant.dependencies)
-
-    ungated = sorted(
-        route.path
-        for route in prod_client.app.routes
-        if getattr(route, "path", "").startswith("/v1/admin") and not guarded(route)
+    contexts = _admin_route_contexts(prod_client.app)
+    assert len(contexts) >= 20, (
+        f"the guard sweep discovered only {len(contexts)} admin routes: fix the discovery,"
+        " not the assertion -- an empty sweep is the #44 defect"
     )
+
+    ungated = sorted(ctx.path for ctx in contexts if not _carries_admin_guard(ctx))
 
     assert not ungated, f"these admin routes mount without require_admin: {ungated}"
