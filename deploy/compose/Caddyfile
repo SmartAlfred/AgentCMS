@@ -1,25 +1,27 @@
-# Caddyfile for AgentCMS production deployment (#31).
-# This file is used by the caddy service in docker-compose.prod.yml.
-# 
-# Behavior:
-# - If DOMAIN is set to a real domain (e.g., cms.example.com) and CADDY_EMAIL is set:
-#     → Automatic HTTPS via Let's Encrypt
-# - If DOMAIN=localhost (default) or no CADDY_EMAIL:
-#     → Self-signed certificates for local HTTPS (browser will warn)
-# - Proxies all traffic to api:8000
-# - Adds security headers
-# - Configures CORS for embed origins (EMBED_ORIGINS env var)
+# Caddyfile for the AgentCMS production stack (#31; made to actually adapt in #37).
+#
+#   DOMAIN=localhost (the default)  -> self-signed certificate (Caddy's internal CA,
+#                                      which it uses for `localhost` automatically)
+#   DOMAIN=cms.example.com          -> automatic HTTPS via Let's Encrypt
+#                                      (needs public DNS + ports 80/443)
+#
+# Proxies everything to api:8000 and adds security headers.  Embed CORS is applied
+# by the API itself (app/api/embed/) from the comma-separated EMBED_ORIGINS; the
+# matcher below lets the edge match the same list when it is written with `|`.
+#
+# CADDY_EMAIL is passed by compose for ACME contact but is not used here: Caddy's
+# global `email` option cannot be made conditional and an empty value aborts config
+# adaptation (which is exactly how this file failed to boot — see #37).
+#
+# One site block only: with DOMAIN=localhost the old "localhost fallback" block
+# defined the same site twice, and Caddy refuses a duplicated matcher.
 
 {
-    # Admin API for healthcheck
+    # Admin API, used by the compose healthcheck
     admin :2019
-    # Disable automatic HTTPS if using localhost without email
-    {$CADDY_EMAIL:}
-    local_certs
 }
 
-{$DOMAIN} {
-    # Proxy to API
+{$DOMAIN:localhost} {
     reverse_proxy api:8000 {
         header_up Host {host}
         header_up X-Real-IP {remote}
@@ -27,56 +29,6 @@
         header_up X-Forwarded-Proto {scheme}
     }
 
-    # Security headers
-    header {
-        # Prevent MIME type sniffing
-        X-Content-Type-Options "nosniff"
-        # Prevent clickjacking
-        X-Frame-Options "SAMEORIGIN"
-        # XSS protection (legacy but harmless)
-        X-XSS-Protection "1; mode=block"
-        # Referrer policy
-        Referrer-Policy "strict-origin-when-cross-origin"
-        # Permissions policy
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        # HSTS (only on real domains with valid certs)
-        {$DOMAIN != "localhost"}
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    }
-
-    # CORS for embed origins (configured via EMBED_ORIGINS env var)
-    # Format: comma-separated list like "https://example.com,https://app.example.com"
-    @embed_origin {
-        header Origin {$EMBED_ORIGINS}
-    }
-    @embed_preflight method OPTIONS
-    @embed_preflight header Access-Control-Request-Method *
-    handle @embed_preflight {
-        header Access-Control-Allow-Origin "{header.Origin}"
-        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
-        header Access-Control-Allow-Headers "Content-Type, Authorization"
-        header Access-Control-Allow-Credentials "true"
-        header Access-Control-Max-Age "86400"
-        respond 204
-    }
-    handle @embed_origin {
-        header Access-Control-Allow-Origin "{header.Origin}"
-        header Access-Control-Allow-Credentials "true"
-        header Vary "Origin"
-    }
-}
-
-# Local development fallback (when DOMAIN=localhost)
-localhost {
-    # Proxy to API
-    reverse_proxy api:8000 {
-        header_up Host {host}
-        header_up X-Real-IP {remote}
-        header_up X-Forwarded-For {remote}
-        header_up X-Forwarded-Proto {scheme}
-    }
-
-    # Security headers
     header {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "SAMEORIGIN"
@@ -85,11 +37,21 @@ localhost {
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
     }
 
-    # CORS for embed origins
-    @embed_origin {
-        header Origin {$EMBED_ORIGINS}
+    # HSTS only on a real domain.  This must be a matcher line, not an entry in the
+    # `header` block: `{$DOMAIN != "localhost"}` expanded to a field with no value.
+    @hsts not host localhost
+    header @hsts Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+    # Valid with an unset EMBED_ORIGINS (the `header` matcher needed a value and
+    # aborted adaptation): `^()$` matches only a missing Origin header.
+    @embed_origin header_regexp Origin ^({$EMBED_ORIGINS})$
+
+    # One matcher name may be defined once — two `@embed_preflight` lines in the
+    # same block were another hard adaptation failure.
+    @embed_preflight {
+        method OPTIONS
+        header Access-Control-Request-Method *
     }
-    @embed_preflight method OPTIONS
     handle @embed_preflight {
         header Access-Control-Allow-Origin "{header.Origin}"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
