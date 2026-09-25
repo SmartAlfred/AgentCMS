@@ -7,21 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- `scripts/deploy_smoke.sh` and `scripts/upgrade_smoke.sh` no longer call
-  `POST /v1/sites` or `POST /v1/sites/{slug}/capability-links` -- neither route
-  exists, so `make selfhost-verify` could never pass. The self-host E2E now
-  provisions the demo site with the shipped `python -m scripts.seed` (the
-  documented `make seed`) and hands the minted capability token to the smoke
-  script (`--capability-token`). Creating a site / minting a link over the API is
-  tracked in #44.
-- `docs/deploy/quickstart.md` and `docs/deploy/embed.md` now document the path
-  that actually exists (and quickstart's broken `deploy/vm/quickstart.md` link is
-  fixed).
-
 ### Added
-- `POST /v1/sites` (+ `GET /v1/sites`, `GET /v1/sites/{slug}`) — create a site over the API:
-  the documented first-run step that never existed, and what turned the #37 self-host E2E job red (#45)
 - Comprehensive test suite for version pinning and rollback logic
 - Production deployment guard for AGENTCMS_IMAGE_TAG (immutable tags required)
 - Self-host turnkey script (`scripts/selfhost.sh`) with env generation and validation

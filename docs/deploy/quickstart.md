@@ -41,12 +41,9 @@ curl https://your-domain.com/healthz
 # {"status":"ok","service":"AgentCMS","version":"0.3.0","env":"production"}
 
 # 4. Prove it serves content: liveness, readiness and a real roundtrip
-#    (publish a post through a capability link -> fetch it from the public URL).
-#    It needs an existing site and a capability token, because nothing can create
-#    a site or mint a link over the API yet (#44) -- the seed script does both:
-CAP=$(docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
-        exec -T api python -m scripts.seed | sed -n 's/.*Capability token: *//p')
-make selfhost-verify CAPABILITY_TOKEN="$CAP"
+#    (create a site -> publish a post -> fetch it from the public URL).
+#    Non-destructive: safe to run on a live host.
+make selfhost-verify
 
 # By hand instead? cp deploy/.env.example .env, edit SECRET_KEY, POSTGRES_PASSWORD
 # and AGENTCMS_IMAGE_TAG (required in production), then:
@@ -55,12 +52,12 @@ make selfhost-verify CAPABILITY_TOKEN="$CAP"
 # compose file it is given, never from your current directory (#35).
 #
 # CI proves this path on every push by running `make selfhost-e2e` from a clean
-# checkout: deploy -> migrate -> /healthz + /readyz -> seed the demo site ->
-# publish a post via a capability link -> fetch the public URL. It is destructive (ends with `down -v`, wiping the
+# checkout: deploy -> migrate -> /healthz + /readyz -> create a site -> publish a
+# post -> fetch the public URL. It is destructive (ends with `down -v`, wiping the
 # database volume), so run it on a throwaway VM or a fresh clone.
 ```
 
-**Full guide**: [docs/DEPLOYING.md](../DEPLOYING.md)
+**Full guide**: [deploy/vm/quickstart.md](deploy/vm/quickstart.md)
 
 ---
 
@@ -68,22 +65,7 @@ make selfhost-verify CAPABILITY_TOKEN="$CAP"
 
 ### 1. Open the Dashboard
 
-A fresh instance has **no site yet**, so create the first one over the API (the
-dashboard reads and edits it from then on; the create-a-site form is tracked in #45):
-
-```bash
-curl -X POST https://your-domain.com/v1/sites \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"slug":"blog","name":"My Blog"}'
-# -> {"id":"...","slug":"blog","name":"My Blog","publish_mode":"auto","created_at":"..."}
-```
-
-Mint `YOUR_ADMIN_TOKEN` with `POST /v1/admin/tokens`. **Until #44 lands, that call is
-unauthenticated — do not expose a fresh instance to the internet before you have minted
-your first token.**
-
-Then open `https://your-domain.com/dashboard`; it now shows your site.
+Visit `https://your-domain.com/dashboard` — create an admin token, then a site.
 
 ### 2. Create a Capability Link for Embedding
 

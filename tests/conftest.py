@@ -131,14 +131,7 @@ def auth_headers(db: Session) -> dict[str, str]:
         id=uuid.uuid4(),
         kind="machine",
         label="test-token",
-        scopes=[
-            "posts:read",
-            "posts:write",
-            "posts:publish",
-            "assets:write",
-            "sites:read",
-            "sites:write",
-        ],
+        scopes=["posts:read", "posts:write", "posts:publish", "assets:write"],
     )
     db.add(actor)
     db.flush()

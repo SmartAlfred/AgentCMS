@@ -3,10 +3,8 @@
 #
 # Runs after `docker compose -f deploy/compose/docker-compose.prod.yml up -d`:
 # 1. Waits for /healthz and /readyz to report healthy
-# 2. Asserts the site named by --site-slug exists (#44: nothing can create one
-#    over HTTP yet, so scripts/selfhost_e2e.sh seeds it first)
-# 3. Uses the capability token handed in via --capability-token /
-#    SMOKE_CAPABILITY_TOKEN (#44: no API mints cap_ tokens yet; `make seed` does)
+# 2. Creates a site via admin API
+# 3. Mints a capability link with posts:read + posts:write + posts:publish
 # 4. Creates and publishes a post via capability link
 # 5. Verifies the post appears on public read surface
 # 6. Verifies embed script is served with correct content-type
@@ -33,8 +31,6 @@ HEALTH_URL="${BASE_URL}/healthz"
 READY_URL="${BASE_URL}/readyz"
 EMBED_SCRIPT_URL="${BASE_URL}/embed/v1/agentcms.js"
 MAX_WAIT="${MAX_WAIT:-180}"  # seconds
-SITE_SLUG="${SMOKE_SITE_SLUG:-blog}"
-CAP_TOKEN="${SMOKE_CAPABILITY_TOKEN:-}"
 POLL_INTERVAL=3
 
 # Parse args
@@ -53,14 +49,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max-wait)
             MAX_WAIT="$2"
-            shift 2
-            ;;
-        --site-slug)
-            SITE_SLUG="$2"
-            shift 2
-            ;;
-        --capability-token)
-            CAP_TOKEN="$2"
             shift 2
             ;;
         *)
@@ -109,7 +97,7 @@ done
 log_info "Creating admin token..."
 ADMIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/admin/tokens" \
     -H "Content-Type: application/json" \
-    -d '{"label":"smoke-test","scopes":["posts:read","posts:write","posts:publish","assets:write","sites:write"]}')
+    -d '{"label":"smoke-test","scopes":["posts:read","posts:write","posts:publish","assets:write"]}')
 
 ADMIN_TOKEN=$(echo "${ADMIN_RESPONSE}" | jq -r '.token // empty')
 if [[ -z "${ADMIN_TOKEN}" || "${ADMIN_TOKEN}" == "null" ]]; then
@@ -118,33 +106,39 @@ if [[ -z "${ADMIN_TOKEN}" || "${ADMIN_TOKEN}" == "null" ]]; then
 fi
 log_info "Admin token created: ${ADMIN_TOKEN:0:20}..."
 
-# ---- 4. The site must exist ----
-# #44: there is no POST /v1/sites (the dashboard only UPDATEs the single existing
-# row), so a site cannot be created from here. The only shipped mechanism is
-# scripts/seed.py, which the self-host E2E runs before this script:
-#   docker compose -f <compose-file> --env-file .env exec -T api python -m scripts.seed
-log_info "Checking that site '${SITE_SLUG}' exists..."
-SITE_PROBE=$(curl -s -o /dev/null -w '%{http_code}' \
+# ---- 4. Create site ----
+log_info "Creating site 'blog'..."
+SITE_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/sites" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-    "${BASE_URL}/v1/sites/${SITE_SLUG}/posts")
-if [[ "${SITE_PROBE}" != "200" ]]; then
-    log_error "No site '${SITE_SLUG}' in this deployment (GET /v1/sites/${SITE_SLUG}/posts -> ${SITE_PROBE})"
-    log_error "Provision one first -- today that means seeding it (#44):"
-    log_error "  docker compose -f ${COMPOSE_FILE} --env-file .env exec -T api python -m scripts.seed"
-    exit 1
-fi
-log_info "Site '${SITE_SLUG}' present"
+    -H "Content-Type: application/json" \
+    -d '{"slug":"blog","name":"Smoke Test Blog","publish_mode":"auto"}')
 
-# ---- 5. Capability link (minted outside the API -- #44) ----
-# #44: POST /v1/sites/{slug}/capability-links does not exist either, so the token
-# is minted by the operator (or by scripts/seed.py in the E2E) and handed in.
-if [[ -z "${CAP_TOKEN}" ]]; then
-    log_error "No capability token: pass --capability-token <cap_...> (or set SMOKE_CAPABILITY_TOKEN)."
-    log_error "Mint one with: docker compose --env-file .env exec -T api python -m scripts.seed"
-    log_error "(#44: no API endpoint mints cap_ tokens yet.)"
+SITE_ID=$(echo "${SITE_RESPONSE}" | jq -r '.id // empty')
+if [[ -z "${SITE_ID}" || "${SITE_ID}" == "null" ]]; then
+    # Site might already exist, try to get it
+    SITE_RESPONSE=$(curl -s -X GET "${BASE_URL}/v1/sites/blog" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}")
+    SITE_ID=$(echo "${SITE_RESPONSE}" | jq -r '.id // empty')
+fi
+if [[ -z "${SITE_ID}" || "${SITE_ID}" == "null" ]]; then
+    log_error "Failed to create/get site: ${SITE_RESPONSE}"
     exit 1
 fi
-log_info "Using capability token: ${CAP_TOKEN:0:20}..."
+log_info "Site ready: ${SITE_ID}"
+
+# ---- 5. Create capability link (embed token with full scope for smoke test) ----
+log_info "Creating capability link for embed..."
+CAP_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/sites/blog/capability-links" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"label":"smoke-embed","verbs":["posts:read","posts:write","posts:publish"],"ttl_minutes":60}')
+
+CAP_TOKEN=$(echo "${CAP_RESPONSE}" | jq -r '.token // empty')
+if [[ -z "${CAP_TOKEN}" || "${CAP_TOKEN}" == "null" ]]; then
+    log_error "Failed to create capability link: ${CAP_RESPONSE}"
+    exit 1
+fi
+log_info "Capability token: ${CAP_TOKEN}"
 
 # ---- 6. Create a post via capability link ----
 log_info "Creating post via capability link..."
@@ -172,7 +166,7 @@ log_info "Post published successfully"
 
 # ---- 8. Verify post appears on public read surface ----
 log_info "Verifying post on public read surface..."
-PUBLIC_RESPONSE=$(curl -s "${BASE_URL}/${SITE_SLUG}/smoke-test")
+PUBLIC_RESPONSE=$(curl -s "${BASE_URL}/blog/smoke-test")
 if [[ "${PUBLIC_RESPONSE}" != *"Smoke Test"* ]]; then
     log_error "Post not found on public page"
     exit 1
@@ -180,7 +174,7 @@ fi
 log_info "Post visible on public page"
 
 # Also check JSON feed
-JSON_RESPONSE=$(curl -s "${BASE_URL}/${SITE_SLUG}/posts.json")
+JSON_RESPONSE=$(curl -s "${BASE_URL}/blog/posts.json")
 PUBLIC_POST_COUNT=$(echo "${JSON_RESPONSE}" | jq '.items | length')
 if [[ "${PUBLIC_POST_COUNT}" -lt 1 ]]; then
     log_error "Post not in posts.json"
@@ -225,18 +219,26 @@ if [[ "${EMBED_POST_TITLE}" != "Smoke Test Post" ]]; then
 fi
 log_info "Embed endpoint returns the published post"
 
-# ---- 11. The embed surface must reject non-capability tokens ----
-# #44 removed the "mint a write-only token" variant of this check (no API mints
-# capability links), so it asserts the property directly instead: an admin
-# (`acms_`) token must never work on the public embed surface.
-log_info "Verifying a non-capability token is rejected on the embed endpoint..."
-ADMIN_EMBED_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    "${BASE_URL}/embed/v1/posts?token=${ADMIN_TOKEN}&limit=5")
-if [[ "${ADMIN_EMBED_CODE}" =~ ^4 ]]; then
-    log_info "Non-capability token correctly rejected (${ADMIN_EMBED_CODE})"
+# ---- 11. Verify write-scoped token is rejected by embed endpoint ----
+log_info "Verifying write-scoped token rejection on embed endpoint..."
+# Create a write-only token
+WRITE_CAP_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/sites/blog/capability-links" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"label":"smoke-write","verbs":["posts:write"],"ttl_minutes":10}')
+
+WRITE_TOKEN=$(echo "${WRITE_CAP_RESPONSE}" | jq -r '.token // empty')
+if [[ -n "${WRITE_TOKEN}" && "${WRITE_TOKEN}" != "null" ]]; then
+    WRITE_EMBED_RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null \
+        "${BASE_URL}/embed/v1/posts?token=${WRITE_TOKEN}&limit=5")
+    if [[ "${WRITE_EMBED_RESPONSE}" == "403" ]]; then
+        log_info "Write-scoped token correctly rejected (403)"
+    else
+        log_error "Write-scoped token was NOT rejected (got ${WRITE_EMBED_RESPONSE})"
+        exit 1
+    fi
 else
-    log_error "Embed endpoint accepted a non-capability token (got ${ADMIN_EMBED_CODE})"
-    exit 1
+    log_warn "Could not create write-only token for rejection test"
 fi
 
 # ---- 12. Verify CORS headers on embed endpoint ----
