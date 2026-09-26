@@ -576,7 +576,7 @@ def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None
 
 
 def _run_smoke_against_stub(
-    tmp_path: Path, *args: str, reflect: str = ""
+    tmp_path: Path, *args: str, reflect: str = "", env_extra: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run deploy_smoke.sh against the curl stub, optionally with a reflecting edge."""
     stub_bin = tmp_path / "bin"
@@ -589,6 +589,8 @@ def _run_smoke_against_stub(
     env["SMOKE_ADMIN_TOKEN"] = ADMIN_BOOTSTRAP_SECRET
     if reflect:
         env["STUB_REFLECT_ORIGIN"] = reflect
+    if env_extra:
+        env.update(env_extra)
     return _run(
         [
             str(REPO_ROOT / "scripts" / "deploy_smoke.sh"),
@@ -960,3 +962,148 @@ def test_deploy_docs_pin_a_released_image_digest() -> None:
     # mentioned 'sha256:', so a release could ship with no pin. Key off a marker instead.
     assert "agentcms-image-digest" in release
     assert "grep -q 'sha256:'" not in release
+
+
+# --- script -> API drift: a script may not call a route the app does not serve ---
+
+# A route registered with ``include_in_schema=False`` is real but invisible to
+# ``app.openapi()``, so it cannot be discovered from the schema; list it here and
+# assert below that the app source still declares it.
+_SCHEMA_INVISIBLE_SCRIPT_ROUTES = ("/v1/version",)
+
+# A /v1 call in a shell script, in either shape it can take: built from a variable
+# (``"${BASE_URL}/v1/sites/${SITE_SLUG}/posts"``) or spelled out absolutely
+# (``"http://127.0.0.1:8000/v1/admin/tokens"``).  The second pattern exists so that
+# dropping the ``${BASE_URL}`` indirection cannot hide a call from this guard.
+_SCRIPT_V1_URLS = (
+    re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}(/v1/[A-Za-z0-9_./${}-]*)"),
+    re.compile(r'(?:^|["\'\s=])(?:https?://[A-Za-z0-9_.:-]+)?(/v1/[A-Za-z0-9_./${}-]*)'),
+)
+_PATH_PARAM = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def _template(path: str) -> str:
+    """``/v1/sites/${SITE_SLUG}/posts`` -> ``/v1/sites/{}/posts``; params go opaque.
+
+    Any path segment the API declares as a parameter must be a parameter in the
+    script too: ``/v1/sites/blog/posts`` is *not* the route the app serves, and a
+    guard that allowed a literal there would approve a hardcoded tenant.
+    """
+    return _PATH_PARAM.sub("{}", path.rstrip("/") or "/")
+
+
+def _script_v1_calls() -> list[tuple[str, int, str | None, str]]:
+    """(script, line, method, path-template) for every ``scripts/*.sh`` /v1 call.
+
+    Discovery reads the curl command, *not* ``app.routes``: under FastAPI 0.141
+    ``include_router`` appends opaque ``_IncludedRouter`` wrappers, so ``app.routes``
+    exposes zero ``/v1/admin`` paths and a sweep built on it passes vacuously -- the
+    trap #44's own guard test fell into.  Continuations are joined first, because a
+    call and its URL are usually on different lines.
+    """
+    calls: set[tuple[str, int, str | None, str]] = set()
+    for script in sorted((REPO_ROOT / "scripts").glob("*.sh")):
+        lines: list[tuple[int, str]] = []
+        for number, line in enumerate(script.read_text().splitlines(), 1):
+            if lines and lines[-1][1].endswith("\\"):
+                lines[-1] = (lines[-1][0], lines[-1][1][:-1] + " " + line.strip())
+            else:
+                lines.append((number, line))
+        for number, line in lines:
+            if line.lstrip().startswith("#") or "curl" not in line:
+                continue
+            method = re.search(r"(?:^|\s)-X\s*([A-Za-z]+)", line)
+            for pattern in _SCRIPT_V1_URLS:
+                for match in pattern.finditer(line):
+                    calls.add(
+                        (
+                            script.name,
+                            number,
+                            method.group(1).upper() if method else None,
+                            _template(match.group(1).split("?", 1)[0]),
+                        )
+                    )
+    return sorted(calls)
+
+
+def test_scripts_only_call_v1_routes_the_app_serves() -> None:
+    """A script that calls a route the API does not serve must fail here, not in CI.
+
+    Nothing checked this: the quickstart documented a ``capability-links`` route
+    that does not exist, and the only place such a call surfaces is a deploy smoke
+    run in CI (or an operator's deploy).  The route set comes from
+    ``app.openapi()["paths"]`` -- the artefact the product actually serves -- plus
+    the schema-invisible routes listed above.
+    """
+    from app.main import app
+
+    spec = app.openapi()["paths"]
+    served = {_template(path) for path in spec}
+    served |= {_template(path) for path in _SCHEMA_INVISIBLE_SCRIPT_ROUTES}
+    allowed_methods = {_template(path): {op.lower() for op in ops} for path, ops in spec.items()}
+
+    calls = _script_v1_calls()
+    called = {call[3] for call in calls}
+    # A guard whose discovery silently finds nothing approves everything: assert the
+    # two load-bearing calls were found before believing any of the above.
+    assert "/v1/admin/tokens" in called, f"discovery found no admin call: {sorted(called)}"
+    assert "/v1/sites/{}/posts" in called, f"discovery found no site call: {sorted(called)}"
+    assert len(calls) >= 6, f"discovery found only {len(calls)} calls: {sorted(called)}"
+
+    problems = []
+    for script, line, method, path in calls:
+        if path not in served:
+            problems.append(f"{script}:{line}: calls {path}, which the API does not serve")
+        elif method and path in allowed_methods and method.lower() not in allowed_methods[path]:
+            problems.append(
+                f"{script}:{line}: {method} {path} is not allowed ({sorted(allowed_methods[path])})"
+            )
+    assert not problems, "scripts calling routes that do not exist: " + "; ".join(problems)
+
+
+def test_the_schema_invisible_script_routes_are_really_declared() -> None:
+    """The allowlist above must not become a bag of names nobody serves."""
+    source = "\n".join(path.read_text() for path in (REPO_ROOT / "app").rglob("*.py"))
+    for path in _SCHEMA_INVISIBLE_SCRIPT_ROUTES:
+        assert f'"{path}"' in source, f"{path} is allowlisted for scripts but no longer declared"
+
+
+def test_the_smoke_fails_when_the_admin_surface_answers_an_anonymous_caller(
+    tmp_path: Path,
+) -> None:
+    """#44: the deploy smoke must go red if /v1/admin/* serves an anonymous caller.
+
+    Watched failing before it was believed: with ``STUB_ADMIN_ANON_CODE=201`` the
+    stub plays the stack #44 shipped (or a loopback-exempt vantage) and the smoke
+    exits 1 with ``#44 REGRESSION``.  ``STUB_ADMIN_MINT_CODE=401`` covers the
+    opposite lie -- a stack that refuses *everything*, including the correct
+    secret, must fail the positive control instead of passing the refusal.
+    """
+    allowed = _run_smoke_against_stub(tmp_path, env_extra={"STUB_ADMIN_ANON_CODE": "201"})
+    assert allowed.returncode != 0, allowed.stdout + allowed.stderr
+    assert "#44 REGRESSION" in allowed.stdout + allowed.stderr, allowed.stdout
+    assert "loopback" in allowed.stdout + allowed.stderr, "the exemption must be named"
+
+    refuses_all = _run_smoke_against_stub(tmp_path, env_extra={"STUB_ADMIN_MINT_CODE": "401"})
+    assert refuses_all.returncode != 0, refuses_all.stdout + refuses_all.stderr
+    assert "Positive control failed" in refuses_all.stdout, refuses_all.stdout
+
+
+def test_selfhost_e2e_asserts_the_anonymous_refusal_itself() -> None:
+    """The job that boots the published image must carry its own #44 assertion.
+
+    deploy_smoke.sh asserts the refusal too, but release.yml boots the published
+    digest through selfhost_e2e.sh: if the probe lived only in the smoke script, a
+    missing guard could still be reported by a job whose log never mentions the
+    admin surface (the deployed job log has 0 occurrences of ``v1/admin`` today).
+    """
+    body = (REPO_ROOT / "scripts" / "selfhost_e2e.sh").read_text()
+    block = body.split("asserting /v1/admin/* refuses an anonymous caller", 1)[1]
+    block = block.split("# --- 7.", 1)[0]
+
+    assert "#44 REGRESSION" in block, block
+    assert block.count('"${BASE_URL}/v1/admin/tokens"') >= 2, "POST and GET must both be probed"
+    assert '-X POST "${BASE_URL}/v1/admin/tokens"' in block, "the mint probe must be a POST"
+    assert "X-Admin-Token: ${bootstrap_admin_token}" in block, "the positive control must send the secret"
+    assert "'201'" in block or '"201"' in block, "the positive control must require 201"
+    assert "loopback" in block, "a loopback-exempt vantage must be named, not silently passed"
