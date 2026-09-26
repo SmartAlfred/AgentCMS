@@ -39,10 +39,11 @@ The embed script needs a **read-only** capability token. `make seed` (i.e. `pyth
 carries `posts:write`/`posts:publish` and is **rejected** by `/embed/v1/posts` (that
 is the point -- an embed token must not be able to write).
 
-**Today (until #44)**: neither the API nor the dashboard can mint a capability
-link yet -- the documented route `POST /v1/sites/{slug}/capability-links` does not
-exist, and the dashboard has no Capability Links screen. The seed script mints one
-and prints it:
+**Today**: neither the API nor the dashboard mints a capability link. The route
+`POST /v1/sites/{slug}/capability-links` has never existed -- it is absent from
+`app.openapi()["paths"]` -- and the dashboard has no Capability Links screen (`#45`
+added `POST /v1/sites`, which creates the site, not a link). The seed script mints
+one and prints it:
 
 ```bash
 docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \

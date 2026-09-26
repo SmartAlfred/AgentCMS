@@ -129,18 +129,20 @@ Then open `https://your-domain.com/dashboard`; it now shows your site.
 
 The embed script needs a **read-only** capability token (`posts:read` scope).
 
-Via Dashboard:
-1. Go to your site → Capability Links → Create Link
-2. Label: `embed`, Verbs: `posts:read`, TTL: 1 year (525600 minutes)
-3. Copy the `cap_blog_xxx...` token
+Running the seed script mints one and prints it (`make seed` is the same script
+against a local dev database):
 
-Via API:
 ```bash
-curl -X POST https://your-domain.com/v1/sites/blog/capability-links \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"label":"embed","verbs":["posts:read"],"ttl_minutes":525600}'
+docker compose -f deploy/compose/docker-compose.prod.yml --env-file .env \
+  exec -T api python -m scripts.seed
+#   Capability token:  cap_blog_xxxxxxxx
+#   Embed token (read-only): cap_blog_yyyyyyyy
 ```
+
+Use the **read-only** token for the embed — `/embed/v1/posts` rejects the write
+token. There is no capability-links API route and no Capability Links screen in
+the dashboard yet, so the seeder is the shipped mint; see
+[embed.md](embed.md) for the full embed setup.
 
 ### 3. Embed in Your Site
 
