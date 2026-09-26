@@ -6,8 +6,10 @@
 # 2. Mints an admin token with the ADMIN_TOKEN bootstrap secret (#44: POST
 #    /v1/admin/tokens is no longer anonymous, so --admin-token / SMOKE_ADMIN_TOKEN
 #    is required -- there is no fallback)
-# 3. Asserts the site named by --site-slug exists (#44: nothing can create one
-#    over HTTP yet, so scripts/selfhost_e2e.sh seeds it first)
+# 2b. Asserts the admin surface refuses an anonymous caller (#44 regression guard:
+#    the deployed stack is the only place the router-level guard is exercised)
+# 3. Asserts the site named by --site-slug exists (scripts/selfhost_e2e.sh seeds it
+#    before this script runs; this script verifies, it does not provision)
 # 3. Uses the capability token handed in via --capability-token /
 #    SMOKE_CAPABILITY_TOKEN (#44: no API mints cap_ tokens yet; `make seed` does)
 # 4. Creates and publishes a post via capability link
@@ -128,6 +130,31 @@ while true; do
     sleep ${POLL_INTERVAL}
 done
 
+# ---- 2b. #44 regression guard: /v1/admin/* must refuse an anonymous caller ----
+# #44 was a P0: POST /v1/admin/tokens was served with no credentials at all, so
+# anyone who could reach the process minted a live token. The fix is a router-level
+# dependency, and this script is the only place a *deployed* stack is exercised --
+# without a negative assertion here the guard can be deleted, every authenticated
+# check still passes, and the hole ships again.
+#
+# The refusal is paired with a positive control (the authenticated mint below):
+# app/api/admin_auth.py exempts a loopback peer, so a vantage that arrives as
+# loopback answers 2xx here. A 2xx is therefore always fatal, and the message names
+# that exemption so a vantage change is loud instead of silently green.
+log_info "Asserting the admin surface refuses an anonymous caller (#44)..."
+ANON_POST_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/v1/admin/tokens" \
+    -H "Content-Type: application/json" \
+    -d '{"label":"anonymous-probe","scopes":["posts:read"]}' || true)
+ANON_GET_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL}/v1/admin/tokens" || true)
+if [[ "${ANON_POST_STATUS}" != "401" || "${ANON_GET_STATUS}" != "401" ]]; then
+    log_error "#44 REGRESSION: anonymous POST /v1/admin/tokens -> ${ANON_POST_STATUS}, GET -> ${ANON_GET_STATUS}; both must be 401"
+    log_error "(this path mints and lists tokens: an anonymous 2xx is the P0 again)"
+    log_error "(if this vantage is loopback-exempt -- app/api/admin_auth.py trusts a loopback peer --"
+    log_error " the refusal assertion is invalid here, not absent: probe from a non-loopback peer)"
+    exit 1
+fi
+log_info "Anonymous /v1/admin/tokens refused (POST ${ANON_POST_STATUS}, GET ${ANON_GET_STATUS})"
+
 # ---- 3. Create admin token ----
 # #44: POST /v1/admin/tokens is authenticated by the ADMIN_TOKEN bootstrap secret.
 # Fail loudly rather than probing the endpoint unauthenticated: a 401 here means
@@ -137,23 +164,30 @@ if [[ -z "${ADMIN_BOOTSTRAP_TOKEN}" ]]; then
     log_error "(it is the ADMIN_TOKEN written into .env by scripts/selfhost.sh; #44 made it mandatory)"
     exit 1
 fi
+# Positive control: the same surface must accept the correct bootstrap secret, so a
+# stack that refuses *everything* cannot pass the assertion above.
 log_info "Creating admin token (authenticated with X-Admin-Token)..."
-ADMIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/v1/admin/tokens" \
+ADMIN_RESPONSE_FILE=$(mktemp)
+ADMIN_STATUS=$(curl -s -o "${ADMIN_RESPONSE_FILE}" -w '%{http_code}' -X POST "${BASE_URL}/v1/admin/tokens" \
     -H "X-Admin-Token: ${ADMIN_BOOTSTRAP_TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{"label":"smoke-test","scopes":["posts:read","posts:write","posts:publish","assets:write","sites:write"]}')
+ADMIN_RESPONSE=$(cat "${ADMIN_RESPONSE_FILE}")
+rm -f "${ADMIN_RESPONSE_FILE}"
 
 ADMIN_TOKEN=$(echo "${ADMIN_RESPONSE}" | jq -r '.token // empty')
-if [[ -z "${ADMIN_TOKEN}" || "${ADMIN_TOKEN}" == "null" ]]; then
+if [[ "${ADMIN_STATUS}" != "201" || -z "${ADMIN_TOKEN}" || "${ADMIN_TOKEN}" == "null" ]]; then
+    log_error "Positive control failed: authenticated POST /v1/admin/tokens -> ${ADMIN_STATUS} (want 201)"
+    log_error "(a stack that refuses the correct X-Admin-Token cannot vouch for the anonymous-refusal assertion above)"
     log_error "Failed to create admin token: ${ADMIN_RESPONSE}"
     exit 1
 fi
 log_info "Admin token created: ${ADMIN_TOKEN:0:20}..."
 
 # ---- 4. The site must exist ----
-# #44: there is no POST /v1/sites (the dashboard only UPDATEs the single existing
-# row), so a site cannot be created from here. The only shipped mechanism is
-# scripts/seed.py, which the self-host E2E runs before this script:
+# This script takes --site-slug and verifies it, because every step below needs a
+# site that already has content. Provisioning is the seeder's job, and the self-host
+# E2E runs it before this script:
 #   docker compose -f <compose-file> --env-file .env exec -T api python -m scripts.seed
 log_info "Checking that site '${SITE_SLUG}' exists..."
 SITE_PROBE=$(curl -s -o /dev/null -w '%{http_code}' \

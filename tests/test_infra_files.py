@@ -406,10 +406,25 @@ CURL_STUB = r"""#!/usr/bin/env bash
 # STUB_REFLECT_ORIGIN=… makes the stub behave like an *edge that reflects an
 # origin* (#48), so the smoke script's CORS assertion can be exercised in every
 # direction rather than only the deny-all one.
+#
+# It models the #44 admin guard too: /v1/admin/tokens answers 401 without an
+# X-Admin-Token header and 201 with it. STUB_ADMIN_ANON_CODE=201 simulates the
+# guard going missing (or a loopback-exempt vantage) and STUB_ADMIN_MINT_CODE=401
+# simulates a stack that refuses the correct secret -- the two ways the smoke
+# script's new #44 assertion and its positive control must be exercised.
+#
+# `-o <file>` is honoured (real curl writes the body there and the code to
+# stdout), so the smoke script can capture a response body *and* its status.
 set -euo pipefail
 args="$*"
 code="200"
 body=""
+out_file=""
+prev=""
+for arg in "$@"; do
+    [[ "$prev" == "-o" ]] && out_file="$arg"
+    prev="$arg"
+done
 headers=$'HTTP/1.1 200 OK\r\ncontent-type: application/javascript\r\n\r\n'
 case "$args" in
     *"/embed/v1/posts"*)
@@ -421,7 +436,16 @@ case "$args" in
         ;;
     *"/embed/v1/agentcms.js"*) body="// agentcms-embed script" ;;
     *"/posts.json"*)           body='{"items":[{"slug":"smoke-test-post","title":"Smoke Test Post"}]}' ;;
-    *"/v1/admin/tokens"*)      body='{"token":"acms_smoketoken"}' ;;
+    *"/v1/admin/tokens"*)
+        body='{"token":"acms_smoketoken"}'
+        if [[ "$args" == *"%{http_code}"* ]]; then
+            if [[ "$args" == *"X-Admin-Token: "* ]]; then
+                code="${STUB_ADMIN_MINT_CODE:-201}"
+            else
+                code="${STUB_ADMIN_ANON_CODE:-401}"
+            fi
+        fi
+        ;;
     *"/publish"*)              body='{"status":"published"}' ;;
     *"/c/"*)                   body='{"id":"11111111-1111-1111-1111-111111111111"}' ;;
     *"/healthz"* | *"/readyz"*) ;;
@@ -434,6 +458,7 @@ if [[ -n "${STUB_REFLECT_ORIGIN:-}" ]] \
     headers+="access-control-allow-origin: ${STUB_REFLECT_ORIGIN}"$'\r\n\r\n'
 fi
 if [[ "$args" == *"%{http_code}"* ]]; then
+    [[ -z "$out_file" ]] || printf '%s' "$body" > "$out_file"
     printf '%s' "$code"
 elif [[ "$args" == *"-D"* ]]; then
     printf '%s' "$headers"
