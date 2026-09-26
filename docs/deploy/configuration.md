@@ -46,6 +46,21 @@ start in production if misconfigured.
 |----------|-------------|
 | `ADMIN_TOKEN` | **Required in production, ≥32 chars.** The bootstrap secret for every `/v1/admin/*` route (`X-Admin-Token: <ADMIN_TOKEN>`). It is a *bootstrap* secret, not a stored token: `scripts/selfhost.sh --setup-only` generates one into `.env`, and rotating it costs nothing (mint your long-lived tokens first, then rotate). A valid dashboard session cookie is also accepted, but only for reads -- cookie-authenticated POST/DELETE additionally require the dashboard CSRF token (`X-CSRF-Token`). Bearer `acms_` tokens need the operator scope `*:read`. |
 
+**Loopback exemption, and why it is safe.** `app/api/admin_auth.py` exempts a caller
+whose peer address is loopback, so an operator on the machine itself can reach
+`/v1/admin/*` (e.g. `curl http://127.0.0.1:8000/v1/admin/tokens`) without sending the
+bootstrap secret. That is an operator-console affordance, not a hole in the public
+path:
+
+* `TRUSTED_PROXIES` defaults to **empty**, so `X-Forwarded-For` is never believed --
+  a remote caller cannot claim to be `127.0.0.1` (see
+  [Metrics behind a proxy](#metrics-behind-a-proxy)).
+* `deploy/compose/docker-compose.prod.yml` binds the API to `127.0.0.1:8000` and runs
+  Caddy as a **separate container**, so public traffic reaches the API from a bridge
+  address, never from loopback -- and every non-loopback caller is still
+  authenticated, with anonymous calls answered `401` (#44).
+* No compose file or documented deployment path uses `network_mode: host`.
+
 ### Runtime
 
 | Variable | Description |
@@ -98,6 +113,11 @@ Used by media upload endpoints (`/v1/assets/*`). All optional — media endpoint
 | `CAPABILITY_RATE_LIMIT_PER_LINK` | `30` | Max requests per link per window. |
 | `CAPABILITY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window duration. |
 | `CAPABILITY_MAX_LIVE_LINKS_PER_SITE` | `100` | Refuse to mint more links per site. |
+
+No route or dashboard screen mints a capability link yet:
+`POST /v1/sites/{slug}/capability-links` is absent from `app.openapi()["paths"]`, so
+today the shipped mint is the seed script (`python -m scripts.seed`) -- see
+[embed.md](embed.md). These settings apply to the links that exist.
 
 ### Observability
 
