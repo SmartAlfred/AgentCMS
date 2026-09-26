@@ -118,6 +118,33 @@ fi
 [ -n "${DOMAIN:-}" ] && set_value DOMAIN "$DOMAIN"
 [ -n "${CADDY_EMAIL:-}" ] && set_value CADDY_EMAIL "$CADDY_EMAIL"
 
+# The edge's embed-CORS matchers need the allowlist as a regex (#48).  The
+# documented EMBED_ORIGINS is comma-separated, and a comma list is not a regex,
+# so the Caddyfile's `header_regexp Origin ^(…)$` never matched a real Origin and
+# the edge silently fell through to the API.  Derive the pipe-joined form here,
+# where the allowlist is already being written, instead of asking the operator for
+# a second spelling of the same list.
+#
+# `.` becomes `[.]` rather than `\.`: the value is spliced into the Caddyfile, and
+# an unescaped dot matches any character (so `https://a.com` would also allow
+# `https://aXcom`).  Bracket classes are used because they need no backslash at
+# all, which keeps the value safe whatever the Caddyfile tokeniser does with it.
+# Whitespace around each entry is stripped and empty entries dropped, exactly like
+# Settings._split_csv_list does for the API, so the edge and the API cannot end up
+# with different allowlists.
+embed_origins_regex() {
+  printf '%s' "$1" \
+    | tr ',' '\n' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+          -e 's/[][+*?(){}.^$|]/[&]/g' -e '/^$/d' \
+    | paste -sd'|' -
+}
+
+embed_regex="$(embed_origins_regex "$(value_of EMBED_ORIGINS)")"
+if [ "$(value_of EMBED_ORIGINS_REGEX)" != "$embed_regex" ]; then
+  set_value EMBED_ORIGINS_REGEX "$embed_regex"
+fi
+
 if command -v git >/dev/null 2>&1; then
   # exit 1 means "not ignored"; anything else (2, 127, a broken git binary) means
   # we cannot tell, so stay quiet rather than print a misleading warning.

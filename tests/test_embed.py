@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from app.config import Settings
 from app.main import create_app
 from app.models.actor import Actor
@@ -20,6 +21,8 @@ from sqlalchemy.orm import Session
 Acceptance criteria covered:
 - Embed token scope enforcement: write token rejected on /embed/v1/posts
 - CORS allowlist behaviour: origins in EMBED_ORIGINS get CORS headers
+- CORS preflight behaviour (#48): every embed route answers one, an unlisted
+  origin gets nothing, and the deny-all default stays silent
 - /embed/v1/... contract stability: versioned endpoint, consistent response shape
 - Embed script served with correct content-type
 - deploy/compose/docker-compose.prod.yml + deploy/.env.example parse/validate
@@ -338,6 +341,102 @@ def test_embed_posts_no_cors_when_embed_origins_empty(client: TestClient, db: Se
             headers={"Origin": "https://anything.example.com"},
         )
         assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}
+
+
+# ---------------------------------------------------------------------------
+# Preflight is the API's own job (#48)
+#
+# The edge may short-circuit a preflight, but only for an origin the operator
+# allowlisted; everything else lands here, so the API's answer has to be right on
+# its own — and the edge is no longer the only thing that ever answered one.
+# ---------------------------------------------------------------------------
+
+EMBED_ROUTES = ("/embed/v1/agentcms.js", "/embed/v1/posts", "/embed/v1/config", "/embed/v1/iframe")
+
+
+def test_every_embed_route_answers_a_preflight() -> None:
+    """A cross-origin fetch of any embed route must survive its preflight.
+
+    `agentcms.js` had no OPTIONS handler, so a `fetch()` of the script from an
+    allowlisted page was refused at the preflight. A guard, because a new embed
+    route added without its own `@router.options` line fails the same way.
+    """
+    from app.api.embed.routes import router as embed_router
+
+    get_paths = {route.path for route in embed_router.routes if "GET" in (route.methods or set())}
+    options_paths = {route.path for route in embed_router.routes if "OPTIONS" in (route.methods or set())}
+    assert get_paths == options_paths, f"embed routes without preflight handling: {get_paths - options_paths}"
+
+
+@pytest.mark.parametrize("route", EMBED_ROUTES)
+def test_preflight_allows_an_allowlisted_origin(route: str, db: Session) -> None:
+    settings = Settings(app_env="test", embed_origins=["https://allowed.example.com"])
+    with TestClient(create_app(settings)) as test_client:
+        _create_site(db)
+        resp = test_client.options(
+            route,
+            headers={
+                "Origin": "https://allowed.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert resp.status_code == 204, route
+        assert resp.headers["access-control-allow-origin"] == "https://allowed.example.com", route
+        assert resp.headers["access-control-allow-credentials"] == "true", route
+        assert resp.headers["vary"] == "Origin", route
+        assert "GET" in resp.headers["access-control-allow-methods"], route
+
+
+@pytest.mark.parametrize("route", EMBED_ROUTES)
+def test_preflight_denies_an_unlisted_origin(route: str, db: Session) -> None:
+    """The allowlist is not bypassed by asking politely in a preflight."""
+    settings = Settings(app_env="test", embed_origins=["https://allowed.example.com"])
+    with TestClient(create_app(settings)) as test_client:
+        _create_site(db)
+        resp = test_client.options(
+            route,
+            headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
+        )
+        assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}, route
+        assert "access-control-allow-credentials" not in {k.lower() for k in resp.headers}, route
+
+
+@pytest.mark.parametrize("route", EMBED_ROUTES)
+def test_preflight_is_silent_on_the_deny_all_default(route: str, db: Session) -> None:
+    """`EMBED_ORIGINS=` (the documented default) must answer nothing at all."""
+    settings = Settings(app_env="test", embed_origins=[])
+    with TestClient(create_app(settings)) as test_client:
+        _create_site(db)
+        resp = test_client.options(
+            route,
+            headers={"Origin": "https://anything.example.com", "Access-Control-Request-Method": "GET"},
+        )
+        assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}, route
+        assert "access-control-allow-credentials" not in {k.lower() for k in resp.headers}, route
+
+
+def test_the_capability_link_surface_advertises_no_cors(db: Session) -> None:
+    """`/c/{token}/…` is not the embed surface and must never claim to be.
+
+    The edge used to answer *this* path's preflight with a reflected
+    `Access-Control-Allow-Origin`; with the edge quiet, the API is what a
+    preflight here gets, and it is a refusal (405: the route is not CORS-enabled).
+    """
+    _create_site(db)
+    plaintext, _ = _create_capability_link(db, verbs=["posts:read", "posts:write"])
+    with TestClient(
+        create_app(Settings(app_env="test", embed_origins=["https://allowed.example.com"]))
+    ) as tc:
+        resp = tc.options(
+            f"/c/{plaintext}/posts",
+            headers={
+                "Origin": "https://allowed.example.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+    assert resp.status_code == 405, "a preflight here is refused, not answered"
+    assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}
+    assert "access-control-allow-credentials" not in {k.lower() for k in resp.headers}
 
 
 def test_embed_config_endpoint(client: TestClient, db: Session) -> None:

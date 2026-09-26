@@ -7,7 +7,9 @@
 #
 # Proxies everything to api:8000 and adds security headers.  Embed CORS is applied
 # by the API itself (app/api/embed/) from the comma-separated EMBED_ORIGINS; the
-# matcher below lets the edge match the same list when it is written with `|`.
+# matchers below let the edge short-circuit a preflight for the *same* list, which
+# is why they are gated on it (#48: they used to match any OPTIONS request and
+# reflect whatever Origin the caller sent, with credentials).
 #
 # CADDY_EMAIL is passed by compose for ACME contact but is not used here: Caddy's
 # global `email` option cannot be made conditional and an empty value aborts config
@@ -42,15 +44,40 @@
     @hsts not host localhost
     header @hsts Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 
-    # Valid with an unset EMBED_ORIGINS (the `header` matcher needed a value and
-    # aborted adaptation): `^()$` matches only a missing Origin header.
-    @embed_origin header_regexp Origin ^({$EMBED_ORIGINS})$
+    # --- embed CORS (#48) ----------------------------------------------------
+    #
+    # The API is the only authority for embed CORS: app/api/embed/routes.py
+    # answers preflights on /embed/v1/* and reflects an Origin only when it is in
+    # EMBED_ORIGINS (deny-all when that list is empty).  The two blocks below are a
+    # short-circuit for browsers, and both are gated on that same allowlist, so the
+    # edge can never assert a permission the operator denied.  They are also scoped
+    # to /embed/*: a matcher on every path would hand an allowlisted origin
+    # Access-Control-Allow-Credentials on the admin and dashboard responses too.
+    #
+    # EMBED_ORIGINS_REGEX is the pipe-joined, escaped form of the documented
+    # comma-separated EMBED_ORIGINS; scripts/selfhost.sh derives it into .env at
+    # deploy time (`make selfhost`).  Unset/empty expands to `^()$`, which no real
+    # Origin matches -- so the documented `EMBED_ORIGINS=` deny-all default now
+    # leaves the edge silent and the API's own deny-all answer reaches the caller
+    # (before #48 the edge answered 204 + reflected ACAO for every origin).
+    #
+    # A deployed stack that skipped selfhost.sh has no EMBED_ORIGINS_REGEX: the
+    # edge then simply stops short-circuiting, which is the fail-closed direction.
+    # The derivation escapes `.` as `[.]` instead of `\.` and never emits a space,
+    # so the spliced value cannot be mangled by Caddy's tokeniser, and
+    # `https://a.com` cannot end up also matching `https://aXcom`.
+    @embed_origin {
+        path /embed/*
+        header_regexp Origin ^({$EMBED_ORIGINS_REGEX})$
+    }
 
     # One matcher name may be defined once — two `@embed_preflight` lines in the
     # same block were another hard adaptation failure.
     @embed_preflight {
         method OPTIONS
         header Access-Control-Request-Method *
+        path /embed/*
+        header_regexp Origin ^({$EMBED_ORIGINS_REGEX})$
     }
     handle @embed_preflight {
         header Access-Control-Allow-Origin "{header.Origin}"
@@ -58,6 +85,7 @@
         header Access-Control-Allow-Headers "Content-Type, Authorization"
         header Access-Control-Allow-Credentials "true"
         header Access-Control-Max-Age "86400"
+        header Vary "Origin"
         respond 204
     }
     handle @embed_origin {

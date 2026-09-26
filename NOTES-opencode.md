@@ -346,3 +346,157 @@ Anything remote stays gated.
 - deploy/render/quickstart.md
 - CHANGELOG.md
 - tests/test_metrics_proxy_trust.py (new)
+
+---
+
+# Implementation Notes for Ticket #48: Embed CORS at the Edge
+
+## Summary
+The edge no longer grants embed CORS to anyone. Both Caddy handlers are gated on
+`path /embed/*` **and** on the operator's allowlist, and the allowlist is now in a
+form the matcher can actually use. The API remains the only authority for embed
+CORS; the edge is a short-circuit that can no longer disagree with it.
+
+## What Was Wrong
+`deploy/compose/Caddyfile` (pre-fix) matched:
+
+```caddy
+@embed_preflight {
+    method OPTIONS
+    header Access-Control-Request-Method *
+}
+handle @embed_preflight {
+    header Access-Control-Allow-Origin "{header.Origin}"
+    header Access-Control-Allow-Credentials "true"
+    respond 204
+}
+```
+
+`EMBED_ORIGINS` was never consulted at the edge, on any path: any site could make
+credentialed cross-origin calls, and the `@embed_origin` twin did the same on
+every response. A second, quieter defect: the non-preflight matcher was
+`header_regexp Origin ^({EMBED_ORIGINS})$` while `EMBED_ORIGINS` is documented
+**comma**-separated, so `^(a.com,b.com)$` matched no real `Origin` — the edge
+never short-circuited anything, and the deny-all default looked like a broken
+deploy rather than a secure one.
+
+## Changes Made
+
+### 1. The edge (`deploy/compose/Caddyfile`)
+- `@embed_preflight` and `@embed_origin` both gained `path /embed/*` and
+  `header_regexp Origin ^({$EMBED_ORIGINS_REGEX})$`.
+- The preflight response now also sets `Vary: Origin` (it reflects the caller's
+  origin, so caches must not share it).
+- Scope matters as much as the allowlist: a matcher on every path would hand an
+  allowlisted origin `Access-Control-Allow-Credentials` on `/v1/admin/*`,
+  `/dashboard/*` and `/c/{token}/*` too.
+- Comments record why each gate exists, that the API is the authority, and that a
+  missing `EMBED_ORIGINS_REGEX` is the fail-closed direction.
+
+### 2. The derived allowlist (`scripts/selfhost.sh`, `deploy/compose/docker-compose.prod.yml`)
+- `embed_origins_regex()` splits `EMBED_ORIGINS` on commas, trims each entry,
+  drops empty ones (exactly what `Settings._split_csv_list` does for the API, so
+  the two cannot diverge), escapes regex metacharacters — `.` becomes `[.]`, never
+  a backslash, never a space, so the spliced value cannot be mangled by Caddy's
+  tokeniser — and joins with `|`.
+- It is written to `EMBED_ORIGINS_REGEX` through the existing `set_value` only when
+  the computed value differs, so re-running is a no-op and the key is never
+  duplicated. Empty in, empty out: with no allowlist the pattern is `^()$`, which
+  no real `Origin` matches.
+- compose passes `EMBED_ORIGINS_REGEX` to the **caddy** service only; the API
+  still receives the comma-separated `EMBED_ORIGINS` it has always had.
+- Deploying with plain `docker compose` (never through `selfhost.sh`) leaves the
+  edge silent — it stops short-circuiting and the API serves every embed CORS
+  response. Documented in `configuration.md`, `embed.md`, `quickstart.md` and the
+  CHANGELOG rather than left as a surprise.
+
+### 3. The API (`app/api/embed/routes.py`)
+- One stacked `OPTIONS` handler for all four embed routes (`/agentcms.js`,
+  `/posts`, `/config`, `/iframe`) instead of four copies. Its behaviour is
+  unchanged and was already correct: no `Origin` matching the allowlist, no CORS
+  header at all.
+
+### 4. Coverage that could not pass before
+- `tests/test_caddy_embed_cors.py` (new, 13 tests): parses the shipped Caddyfile,
+  expands its env placeholders and evaluates the matchers, so the gate is asserted
+  against the file that ships rather than a copy of it. Includes a Docker-gated
+  `caddy validate`/adaptation check.
+- `tests/test_embed.py`: every embed route answers a preflight; allowlisted origin
+  allowed, unlisted denied, deny-all silent, and the capability-link surface
+  advertises no CORS (it 405s an `OPTIONS`, which is the point).
+- `tests/test_infra_files.py`: the derivation, its recomputation when the list
+  changes, the smoke script's CORS check in **all three** directions (allowlisted,
+  an allowlist that does not contain the probe origin, deny-all), and that the
+  smoke probe asks for a path the API actually routes.
+- `scripts/selfhost_e2e.sh`: the stack's CORS was previously only ever asserted
+  through the API's published port — i.e. *behind* the edge, where the defect was
+  invisible. It now probes through Caddy (`https://localhost`, `-k` for the
+  internal CA): denied as deployed, then re-deployed with `EMBED_ORIGINS` set and
+  re-derived by `selfhost.sh`, and asserted allowed — while still denying an
+  unlisted origin. That is the regression the ticket asks CI to guard, and it is
+  the only place a real Caddy evaluates the matcher.
+
+## Acceptance Criteria Verification
+
+| Criterion | Status | Notes |
+|-----------|--------|-------|
+| An unlisted origin gets no `Access-Control-Allow-Origin` (with or without credentials) from the edge | ✅ | `test_an_unlisted_origin_is_denied_even_when_one_is_listed`; restored the buggy Caddyfile and watched 8 tests fail |
+| A listed origin still works end to end | ✅ | `test_every_allowlisted_origin_is_allowed_and_nothing_else_is`; smoke-script positive branch; E2E allow-probe through Caddy |
+| The preflight only short-circuits `OPTIONS` on the embed surface | ✅ | `test_the_preflight_short_circuit_only_covers_options`, `test_the_edge_never_answers_a_preflight_for_a_non_embed_path` |
+| The edge cannot widen CORS beyond `/embed/*` | ✅ | `test_the_edge_does_not_widen_cors_beyond_the_embed_surface`; admin/dashboard/capability-link paths are structurally outside both handlers |
+| Comma-separated `EMBED_ORIGINS` works as documented (no second spelling for the operator) | ✅ | derived by `selfhost.sh`; `test_selfhost_derives_the_edge_allowlist_from_the_documented_list` |
+| Editing the list and re-running cannot leave a stale pattern | ✅ | `test_selfhost_recomputes_the_edge_allowlist_when_the_list_changes` |
+| `.` cannot be used to widen the allowlist (`a.com` must not match `aXcom`) | ✅ | escaped as `[.]`; mutation test with the escaping removed fails `test_every_allowlisted_origin_is_allowed_and_nothing_else_is` |
+| Empty `EMBED_ORIGINS` is deny-all, and the edge is silent rather than open | ✅ | `test_a_preflight_without_an_origin_header_advertises_nothing`, `test_preflight_is_silent_on_the_deny_all_default`, E2E deny-probe |
+| The smoke assertion runs in CI against the compose stack | ✅ | `selfhost` job already ran `deploy_smoke.sh`; it now also probes through Caddy in both directions, and the stub-based tests cover all three of the script's CORS branches |
+| Smoke cannot go green while the edge reflects an unlisted origin | ✅ | `test_deploy_smoke_catches_an_edge_that_reflects_an_unlisted_origin` (fails the run with the open-embed message) |
+
+## Testing
+- New: `tests/test_caddy_embed_cors.py` (13 tests, 3 Docker-gated), plus 5 in
+  `tests/test_embed.py` and 6 in `tests/test_infra_files.py`.
+- Full suite: 990 passed, 9 skipped (the skips are the pre-existing Docker/CI-only
+  ones, plus the 3 Caddy adaptation cases).
+- `ruff format`, `ruff check`, `ruff format --check`, `mypy` all clean.
+- The two `edge_cors_probe` directions were exercised locally against a fake
+  `curl` (allow, deny, reflect-for-anyone, wrong-origin) so the bash guard is known
+  to fail when it should, not only when it should pass.
+
+## Not Done (Deliberately, Stated Plainly)
+- **No live Caddy was run on this machine.** `docker` and `caddy` are not installed
+  here, so `caddy validate` (Docker-gated test), the compose deploy and the edge
+  probes in `selfhost_e2e.sh` were not executed locally — they are the CI job's
+  job. The Caddyfile is asserted by parsing and evaluating the shipped file, and
+  the bash guard by a fake `curl`; that is a substitute for running Caddy, not an
+  equivalent. If CI's selfhost job goes red on the new edge phase, the Caddyfile
+  is the first place to look.
+- **The edge still does the CORS short-circuit rather than dropping it.** Dropping
+  the two `handle` blocks would have been a smaller diff, but the preflight would
+  then cost a full API round trip on every embed mount, and the ticket's own
+  smoke probe asserts an edge answer. Gating was chosen so the fast path survives
+  without the open door.
+- **`/c/{token}/*` (the capability-link surface) is not given embed CORS by the
+  edge any more.** It never had any reason to; the API never sent CORS there
+  either. If a browser integration legitimately needs credentialed CORS on
+  `/c/*`, that is a separate decision about a separate surface.
+- **`Vary: Origin` is still only sent on the allow path** (API side, pre-existing).
+  Considered, because a shared cache in front of a stack could otherwise reuse a
+  denied answer. It is benign in the direction that matters: every response that
+  *does* carry `Access-Control-Allow-Origin` also carries `Vary: Origin`, so an
+  allowlisted preflight cannot be replayed to an unlisted origin; the reverse
+  (a cached denial reaching an allowlisted origin behind a CDN) costs one extra
+  preflight, not a permission. Left alone rather than widen the diff.
+
+## Files Modified / Added for Ticket #48
+- deploy/compose/Caddyfile
+- deploy/compose/docker-compose.prod.yml
+- deploy/.env.example
+- scripts/selfhost.sh
+- scripts/selfhost_e2e.sh
+- app/api/embed/routes.py
+- docs/deploy/configuration.md
+- docs/deploy/embed.md
+- docs/deploy/quickstart.md
+- CHANGELOG.md
+- tests/test_caddy_embed_cors.py (new)
+- tests/test_embed.py
+- tests/test_infra_files.py

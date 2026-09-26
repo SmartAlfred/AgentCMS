@@ -64,6 +64,16 @@ EMBED_ORIGINS=https://www.example.com,https://blog.example.com,https://app.examp
 
 **Default is deny-all** — the embed script will fail with a CORS error if this isn't set.
 
+> **Behind a reverse proxy or the Caddy edge:** run `scripts/selfhost.sh` (or
+> `make selfhost`) after editing `EMBED_ORIGINS`. It derives
+> `EMBED_ORIGINS_REGEX` — the pipe-joined, escaped form the Caddy edge matches on
+> — from your list, so the edge and the API can never disagree. A value
+> hand-written into `.env` will be overwritten, and a comma-separated list is not
+> a regex. Deploying with `docker compose` directly (without `selfhost.sh`) leaves
+> the edge silent: it stops short-circuiting preflights and the API's own
+> deny-all-or-allow answer reaches the browser unchanged. See
+> [configuration.md](configuration.md#where-embed-cors-is-decided).
+
 ### 3. Add the Script Tag
 
 Place the script tag **where you want the content to appear**, or in `<head>`:

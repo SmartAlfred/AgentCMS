@@ -368,25 +368,26 @@ async def serve_embed_iframe(request: Request) -> HTMLResponse:
 
 # ---------------------------------------------------------------------------
 # OPTIONS handlers for CORS preflight
+#
+# The edge (deploy/compose/Caddyfile) may short-circuit a preflight, but only for
+# an allowlisted origin: the API is the authority for embed CORS, and it stays
+# correct on its own when the edge stays quiet — the documented
+# `EMBED_ORIGINS=` deny-all default, and any deployment whose edge has no derived
+# allowlist to match against. Every route that can be fetched cross-origin needs
+# one, so they all share a single handler (#48).
 # ---------------------------------------------------------------------------
 
 
+@router.options("/agentcms.js", include_in_schema=False)
 @router.options("/posts", include_in_schema=False)
-async def embed_posts_options(request: Request) -> Response:
-    response = Response(status_code=204)
-    _apply_cors_preflight(response, request)
-    return response
-
-
 @router.options("/config", include_in_schema=False)
-async def embed_config_options(request: Request) -> Response:
-    response = Response(status_code=204)
-    _apply_cors_preflight(response, request)
-    return response
-
-
 @router.options("/iframe", include_in_schema=False)
-async def embed_iframe_options(request: Request) -> Response:
+async def embed_cors_preflight(request: Request) -> Response:
+    """Answer a CORS preflight for an embed route, allowlist permitting.
+
+    A new embed route needs its own ``@router.options`` line here, or a
+    cross-origin ``fetch`` of it is refused at the preflight.
+    """
     response = Response(status_code=204)
     _apply_cors_preflight(response, request)
     return response

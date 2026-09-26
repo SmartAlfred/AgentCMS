@@ -227,3 +227,9 @@ docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml up -d -
 ```
 
 The embed script works on localhost too — just set `EMBED_ORIGINS=http://localhost:3000` (or your dev server origin).
+
+Running `docker compose` directly, as above, skips `scripts/selfhost.sh` — so
+`EMBED_ORIGINS_REGEX` is never derived and the Caddy edge stops short-circuiting
+embed preflights. The API still answers them from `EMBED_ORIGINS` (deny-all by
+default), so this only costs a round trip; use `make selfhost` to get the
+edge matcher too.

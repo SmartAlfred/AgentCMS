@@ -33,6 +33,7 @@ start in production if misconfigured.
 | `DOMAIN` | No | No | `localhost` | Caddy domain for auto-TLS |
 | `CADDY_EMAIL` | Conditional | **Yes** | `""` | Let's Encrypt email (required if DOMAIN≠localhost) |
 | `EMBED_ORIGINS` | No | No | `""` (deny all) | Comma-separated embed allowlist |
+| `EMBED_ORIGINS_REGEX` | No | No | `""` (empty = edge silent) | **Derived** from `EMBED_ORIGINS` by `scripts/selfhost.sh`; do not set by hand |
 | `EMBED_TOKEN_SCOPE` | No | No | `posts:read` | Scope for embed tokens |
 
 ---
@@ -154,7 +155,28 @@ Rules to keep in mind when you do set `TRUSTED_PROXIES`:
 | Variable | Description |
 |----------|-------------|
 | `EMBED_ORIGINS` | Comma-separated list of origins allowed to embed the CMS via the embed script. **Empty = deny all (secure default).** Example: `https://example.com,https://blog.example.com` |
+| `EMBED_ORIGINS_REGEX` | The same allowlist in the form the Caddy edge can match: pipe-joined, with `.` written as `[.]` (`https://a[.]example[.]com\|https://b[.]example[.]com`). **Derived — never set it yourself.** `scripts/selfhost.sh` recomputes it from `EMBED_ORIGINS` on every run and writes it into `.env`. |
 | `EMBED_TOKEN_SCOPE` | Scope granted to embed tokens. **Must be a read-only scope.** Currently only `posts:read` is supported. |
+
+#### Where embed CORS is decided
+
+The **API is the only authority**: `app/api/embed/routes.py` answers preflights on
+`/embed/v1/*` and emits `Access-Control-Allow-Origin` only for an origin in
+`EMBED_ORIGINS` (nothing at all when the list is empty).
+
+`deploy/compose/Caddyfile` may short-circuit a preflight before the request reaches
+the API, so its matchers are gated on the *same* allowlist **and** on the path
+prefix `/embed/*`:
+
+* With `EMBED_ORIGINS=` (the default) there is no allowlist, so the edge's matchers
+  cannot match any `Origin` and the edge stays silent. The API's deny-all answer is
+  what reaches the caller.
+* With an allowlist, only those exact origins are reflected, with
+  `Access-Control-Allow-Credentials: true`, and only for `/embed/*` — the admin API
+  and the capability-link surface are never handed embed CORS by the edge.
+* A stack deployed with plain `docker compose` (never through `scripts/selfhost.sh`)
+  has no `EMBED_ORIGINS_REGEX`, so the edge stops short-circuiting and the API serves
+  every embed CORS response. That is the fail-closed direction, not a break.
 
 ---
 

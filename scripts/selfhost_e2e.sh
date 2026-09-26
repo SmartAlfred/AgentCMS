@@ -3,7 +3,8 @@
 #
 #   ./scripts/selfhost_e2e.sh                 deploy .env -> stack -> migrate ->
 #                                             healthz/readyz -> seed a site ->
-#                                             API roundtrip -> down -v
+#                                             API roundtrip -> embed CORS at the
+#                                             Caddy edge, both ways -> down -v
 #   ./scripts/selfhost_e2e.sh --keep          leave the stack running for poking at
 #   ./scripts/selfhost_e2e.sh --reuse-env     run against an existing .env (repeat runs)
 #   ./scripts/selfhost_e2e.sh --timeout 300   raise the per-assertion wait budget (s)
@@ -229,5 +230,76 @@ fi
 ./scripts/deploy_smoke.sh --base-url "$BASE_URL" --compose-file "$COMPOSE_FILE" --max-wait "$TIMEOUT" \
   --site-slug "$site_slug" --capability-token "$cap_token" \
   || die "the API roundtrip failed (see [SMOKE] output above)"
+
+# --- 8. the Caddy edge: embed CORS must equal the operator's allowlist (#48) --
+#
+# Every assertion above talks to the API's published port, so none of them can
+# see the edge. The open-embed hole this ticket closed was *at* the edge: it
+# answered every preflight with the caller's Origin plus credentials, so the
+# smoke assertion in step 7 was unsatisfiable on the documented default (a
+# correct, deny-all deploy looked broken). Probing through Caddy is the only way
+# CI can see the matcher that was fixed. DOMAIN=localhost means Caddy's own
+# internal CA, hence -k.
+EDGE_BASE="${SELFHOST_E2E_EDGE_URL:-https://localhost}"
+EMBED_PROBE_ORIGIN="http://localhost:3000"
+UNLISTED_PROBE_ORIGIN="https://not-allowlisted.example"
+
+wait_for_edge() { # label
+  local label="$1" deadline=$(( $(date +%s) + TIMEOUT ))
+  while :; do
+    if curl -skf -o /dev/null "${EDGE_BASE}/healthz"; then
+      log "$label -> 200 through ${EDGE_BASE}"
+      return 0
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || die "${EDGE_BASE} never served /healthz after ${TIMEOUT}s"
+    sleep 3
+  done
+}
+
+edge_cors_probe() { # origin allow|deny label
+  local origin="$1" verdict="$2" label="$3" headers=""
+  headers="$(curl -sk -D - -o /dev/null -X OPTIONS \
+      -H "Origin: ${origin}" \
+      -H 'Access-Control-Request-Method: GET' \
+      "${EDGE_BASE}/embed/v1/posts")" \
+    || die "the Caddy edge answered nothing for a ${origin} preflight on ${EDGE_BASE}"
+  local acao
+  acao="$(printf '%s\n' "$headers" \
+    | { grep -i '^access-control-allow-origin:' || true; } \
+    | head -1 | cut -d' ' -f2- | tr -d '\r')"
+  case "$verdict" in
+    allow)
+      [ "$acao" = "$origin" ] \
+        || die "the edge must allow the configured origin ${origin}, but returned '${acao:-no access-control-allow-origin}' — check EMBED_ORIGINS_REGEX"
+      ;;
+    deny)
+      [ -z "$acao" ] \
+        || die "the edge advertised 'Access-Control-Allow-Origin: ${acao}' for the unlisted origin ${origin} — an open-embed hole (#48)"
+      ;;
+  esac
+  log "edge CORS: ${label} (ACAO: ${acao:-none})"
+}
+
+wait_for_edge "GET /healthz through Caddy"
+log "probing embed CORS at the edge as deployed (EMBED_ORIGINS empty = deny-all)"
+edge_cors_probe "$EMBED_PROBE_ORIGIN" deny "denied an unlisted origin"
+edge_cors_probe "$UNLISTED_PROBE_ORIGIN" deny "denied an unlisted origin"
+
+# Now the positive direction, through the edge, with the value selfhost.sh
+# derives: re-running --setup-only is the same edit an operator makes when they
+# set EMBED_ORIGINS, and it is the only thing that recomputes the pattern.
+log "re-deploying with EMBED_ORIGINS=${EMBED_PROBE_ORIGIN} to prove the allowlist is honoured at the edge"
+sed -i.bak "s|^EMBED_ORIGINS=.*$|EMBED_ORIGINS=${EMBED_PROBE_ORIGIN}|" "$ENV_FILE" \
+  || die "could not set EMBED_ORIGINS in ${ENV_FILE}"
+rm -f "${ENV_FILE}.bak"
+./scripts/selfhost.sh --setup-only --env-file "$ENV_FILE" \
+  || die "scripts/selfhost.sh --setup-only failed to re-derive the edge allowlist"
+grep -q '^EMBED_ORIGINS_REGEX=http://localhost:3000$' "$ENV_FILE" \
+  || die "selfhost.sh did not derive EMBED_ORIGINS_REGEX for ${EMBED_PROBE_ORIGIN}: $(sed -n 's/^EMBED_ORIGINS_REGEX=/…/p' "$ENV_FILE" | tail -1)"
+compose up -d || die "docker compose up failed after EMBED_ORIGINS changed"
+wait_for_http "$BASE_URL/healthz" "GET /healthz (allowlisted deploy)"
+wait_for_edge "GET /healthz through Caddy (allowlisted deploy)"
+edge_cors_probe "$EMBED_PROBE_ORIGIN" allow "allowed the configured origin"
+edge_cors_probe "$UNLISTED_PROBE_ORIGIN" deny "still denied an unlisted origin"
 
 log "SELF-HOST E2E PASSED — the documented path deploys and serves content"

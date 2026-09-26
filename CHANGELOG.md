@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- The Caddy edge no longer hands out embed CORS to callers it was never told
+  about. `deploy/compose/Caddyfile` matched *any* `OPTIONS` request that carried
+  `Access-Control-Request-Method`, on *any* path, and answered it with
+  `Access-Control-Allow-Origin: <whatever the caller sent>` plus
+  `Access-Control-Allow-Credentials: true` -- `EMBED_ORIGINS` was never consulted
+  at the edge, so a front-end the operator had not allowlisted could make
+  credentialed cross-origin calls to the CMS, including through the Caddy port.
+  Both the preflight and the non-preflight handler are now gated on `path /embed/*`
+  and on the allowlist, so the edge can never assert a permission the operator
+  denied, and an allowlisted origin is no longer given embed CORS on the admin
+  and capability-link surfaces (#48).
+- The edge allowlist is matched correctly for the first time. `EMBED_ORIGINS` is
+  documented comma-separated, and the matcher was `^(a.com,b.com)$`, which no
+  real `Origin` can equal -- so a correctly configured edge silently matched
+  nothing. `scripts/selfhost.sh` now derives `EMBED_ORIGINS_REGEX` (pipe-joined,
+  `.` escaped as `[.]`) from `EMBED_ORIGINS` on every run and hands it to Caddy;
+  empty means the edge stays silent and the API's own deny-all answer reaches the
+  caller, which is the fail-closed direction. Deploying with plain
+  `docker compose` leaves the edge silent rather than open (#48).
 - `GET /metrics` no longer takes its loopback exemption from a client-supplied
   `X-Forwarded-For` header. `app/api/client_ip.py` is now the single place both
   `GET /metrics` and `/v1/admin/*` ask "is this caller local?": the TCP peer

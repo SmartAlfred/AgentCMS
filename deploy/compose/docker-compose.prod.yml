@@ -118,7 +118,14 @@ services:
     environment:
       DOMAIN: ${DOMAIN:-localhost}
       CADDY_EMAIL: ${CADDY_EMAIL:-}
-      EMBED_ORIGINS: ${EMBED_ORIGINS:-}
+      # #48: the Caddyfile's embed-CORS matchers read the *derived* allowlist, not
+      # EMBED_ORIGINS: it is documented comma-separated, and a comma list is not a
+      # regex, so `header_regexp Origin ^(https://a.com,https://b.com)$` never
+      # matched a real Origin.  scripts/selfhost.sh writes the pipe-joined form into
+      # .env as EMBED_ORIGINS_REGEX; unset means the edge's CORS matchers cannot
+      # match anything (deny-all), and the API answers every embed CORS request
+      # from the EMBED_ORIGINS above.  Do not set this by hand.
+      EMBED_ORIGINS_REGEX: ${EMBED_ORIGINS_REGEX:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

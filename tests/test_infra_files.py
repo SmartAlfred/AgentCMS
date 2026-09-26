@@ -397,11 +397,15 @@ def test_caddyfile_only_uses_matchers_it_can_adapt() -> None:
 
 
 CURL_STUB = r"""#!/usr/bin/env bash
-# A curl stand-in for the deploy_smoke.sh regression test below: it answers every
+# A curl stand-in for the deploy_smoke.sh regression tests below: it answers every
 # URL the smoke script probes and never sends an access-control-allow-origin
 # header -- the documented deny-all default (`EMBED_ORIGINS=` in
 # deploy/.env.example).  `-w %{http_code}` callers get a status code, `-D`
 # callers get response headers, everyone else gets a body.
+#
+# STUB_REFLECT_ORIGIN=… makes the stub behave like an *edge that reflects an
+# origin* (#48), so the smoke script's CORS assertion can be exercised in every
+# direction rather than only the deny-all one.
 set -euo pipefail
 args="$*"
 code="200"
@@ -423,6 +427,12 @@ case "$args" in
     *"/healthz"* | *"/readyz"*) ;;
     *)                         body="<html><body><h1>Smoke Test Post</h1></body></html>" ;;
 esac
+if [[ -n "${STUB_REFLECT_ORIGIN:-}" ]] \
+    && [[ "$args" == *"/embed/v1/posts"* ]] \
+    && [[ "$args" == *"Origin: ${STUB_REFLECT_ORIGIN}"* ]]; then
+    headers=$'HTTP/1.1 204 No Content\r\ncontent-type: text/plain\r\n'
+    headers+="access-control-allow-origin: ${STUB_REFLECT_ORIGIN}"$'\r\n\r\n'
+fi
 if [[ "$args" == *"%{http_code}"* ]]; then
     printf '%s' "$code"
 elif [[ "$args" == *"-D"* ]]; then
@@ -434,6 +444,68 @@ fi
 
 
 ADMIN_BOOTSTRAP_SECRET = "bootstrap-admin-secret-0000000000000001"
+
+
+# --- #48: the edge's CORS matchers read a *derived* allowlist ----------------
+
+
+def test_selfhost_derives_the_edge_allowlist_from_the_documented_list() -> None:
+    """`EMBED_ORIGINS` is documented comma-separated; the edge needs a regex (#48).
+
+    The Caddyfile matches `header_regexp Origin ^(…)$`, and a comma list is not a
+    regex, so a correctly-configured operator's edge never matched anything. The
+    deploy script derives the pipe-joined form instead of asking for a second
+    spelling of the same list — and escapes `.` so `https://a.com` cannot also
+    allow `https://aXcom`.
+    """
+    from tests.test_caddy_embed_cors import derived_origins_regex
+
+    assert derived_origins_regex("https://a.example.com,https://b.example.com") == (
+        r"https://a[.]example[.]com|https://b[.]example[.]com"
+    )
+    assert derived_origins_regex("https://a.example.com, https://b.example.com") == (
+        r"https://a[.]example[.]com|https://b[.]example[.]com"
+    ), "whitespace around an entry must not survive into the pattern"
+    assert derived_origins_regex("") == ""
+    assert derived_origins_regex(", ,") == "", "empty entries are dropped, like Settings does"
+    assert derived_origins_regex("http://localhost:3000") == "http://localhost:3000"
+
+
+def test_selfhost_recomputes_the_edge_allowlist_when_the_list_changes(tmp_path: Path) -> None:
+    """Editing `EMBED_ORIGINS` and re-running must not leave a stale pattern behind.
+
+    A stale `EMBED_ORIGINS_REGEX` is the same class of defect as a missing one: the
+    edge and the API would disagree about who may embed.
+    """
+    env_file = tmp_path / "prod.env"
+    env_file.write_text(
+        "DOMAIN=localhost\n"
+        f"SECRET_KEY={'s' * 48}\n"
+        f"POSTGRES_PASSWORD={'p' * 24}\n"
+        "AGENTCMS_IMAGE_TAG=agentcms:test\n"
+        "EMBED_ORIGINS=https://old.example.com\n"
+    )
+    assert _run(["bash", "scripts/selfhost.sh", "--setup-only", "--env-file", str(env_file)]).returncode == 0
+    assert "EMBED_ORIGINS_REGEX=https://old[.]example[.]com" in env_file.read_text()
+
+    env_file.write_text(env_file.read_text().replace("EMBED_ORIGINS=https://old.example.com", ""))
+    assert _run(["bash", "scripts/selfhost.sh", "--setup-only", "--env-file", str(env_file)]).returncode == 0
+    derived = [ln for ln in env_file.read_text().splitlines() if ln.startswith("EMBED_ORIGINS_REGEX=")]
+    assert derived == ["EMBED_ORIGINS_REGEX="], "an emptied allowlist must empty the pattern too"
+
+
+def test_the_cors_probe_in_the_smoke_script_asks_a_path_the_api_answers() -> None:
+    """#48: the smoke assertion must fail on the edge, not on a path the API 405s.
+
+    The edge used to answer this preflight itself for *any* origin. The probe has
+    to hit a path the API routes (`/embed/v1/…`), so the assertion reads the
+    answer the operator actually configured.
+    """
+    smoke = (REPO_ROOT / "scripts" / "deploy_smoke.sh").read_text()
+    assert '-X OPTIONS "${BASE_URL}/embed/v1/posts"' in smoke
+    assert "Access-Control-Request-Method: GET" in smoke
+    caddyfile = (REPO_ROOT / "deploy" / "compose" / "Caddyfile").read_text()
+    assert "path /embed/*" in caddyfile, "the edge only short-circuits the embed surface"
 
 
 def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None:
@@ -476,6 +548,106 @@ def test_deploy_smoke_cors_check_cannot_abort_the_script(tmp_path: Path) -> None
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "ALL SMOKE TESTS PASSED" in proc.stdout, proc.stdout
     assert "CORS deny-all confirmed" in proc.stdout, proc.stdout
+
+
+def _run_smoke_against_stub(
+    tmp_path: Path, *args: str, reflect: str = ""
+) -> subprocess.CompletedProcess[str]:
+    """Run deploy_smoke.sh against the curl stub, optionally with a reflecting edge."""
+    stub_bin = tmp_path / "bin"
+    if not stub_bin.exists():
+        stub_bin.mkdir()
+        curl = stub_bin / "curl"
+        curl.write_text(CURL_STUB)
+        curl.chmod(0o755)
+    env = {**os.environ, "PATH": f"{stub_bin}{os.pathsep}{os.environ['PATH']}"}
+    env["SMOKE_ADMIN_TOKEN"] = ADMIN_BOOTSTRAP_SECRET
+    if reflect:
+        env["STUB_REFLECT_ORIGIN"] = reflect
+    return _run(
+        [
+            str(REPO_ROOT / "scripts" / "deploy_smoke.sh"),
+            "--base-url",
+            "http://stub.invalid",
+            "--compose-file",
+            "deploy/compose/docker-compose.prod.yml",
+            "--max-wait",
+            "5",
+            "--site-slug",
+            "blog",
+            "--capability-token",
+            "cap_blog_ab-cd_ef",
+            "--embed-token",
+            "cap_blog_ro-xy",
+            *args,
+        ],
+        env=env,
+    )
+
+
+def test_deploy_smoke_accepts_a_reflected_origin_the_operator_allowlisted(tmp_path: Path) -> None:
+    """The positive branch: a configured allowlist must be allowed to embed (#48).
+
+    Only the deny-all branch had ever been exercised, so nothing proved the
+    assertion could still pass on a correctly-configured stack.
+    """
+    proc = _run_smoke_against_stub(
+        tmp_path,
+        "--embed-origins",
+        "http://localhost:3000",
+        reflect="http://localhost:3000",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "CORS preflight allowed the configured origin: http://localhost:3000" in proc.stdout, proc.stdout
+    assert "ALL SMOKE TESTS PASSED" in proc.stdout, proc.stdout
+
+
+def test_deploy_smoke_catches_an_edge_that_reflects_an_unlisted_origin(tmp_path: Path) -> None:
+    """#48: the defect the ticket found, asserted at the level it was found.
+
+    A stack whose edge answers `Access-Control-Allow-Origin` for an origin the
+    operator never allowlisted is an open-embed hole, and the repo's own smoke
+    script has to be the thing that says so.
+    """
+    proc = _run_smoke_against_stub(tmp_path, reflect="http://localhost:3000")
+    assert proc.returncode != 0, proc.stdout
+    assert "which is not in EMBED_ORIGINS" in proc.stdout + proc.stderr, proc.stdout + proc.stderr
+    assert "ALL SMOKE TESTS PASSED" not in proc.stdout
+
+    # Same verdict when an allowlist exists but does not list the probe origin.
+    other = _run_smoke_against_stub(
+        tmp_path,
+        "--embed-origins",
+        "https://a.example.com",
+        reflect="http://localhost:3000",
+    )
+    assert other.returncode != 0, other.stdout
+    assert "CORS denied" not in other.stdout, other.stdout
+
+
+def test_the_e2e_checks_embed_cors_through_caddy_in_both_directions() -> None:
+    """#48: the assertion has to run where the defect was, or it guards nothing.
+
+    The E2E drives the API's published port, so every CORS assertion it already
+    made sat *behind* the edge. Asserting through `${EDGE_BASE}` (Caddy) in both
+    directions -- deny as deployed, allow once `EMBED_ORIGINS` is set -- is the
+    only coverage that can fail if the Caddyfile matcher regresses.
+    """
+    e2e = (REPO_ROOT / "scripts" / "selfhost_e2e.sh").read_text()
+    assert "${EDGE_BASE}/embed/v1/posts" in e2e, "the probe must hit the path the API routes"
+    assert 'EDGE_BASE="${SELFHOST_E2E_EDGE_URL:-https://localhost}"' in e2e
+    assert "-sk" in e2e, "Caddy serves localhost with its internal CA in the E2E"
+    assert 'edge_cors_probe "$UNLISTED_PROBE_ORIGIN" deny' in e2e
+    assert 'edge_cors_probe "$EMBED_PROBE_ORIGIN" allow' in e2e
+    assert "./scripts/selfhost.sh --setup-only --env-file" in e2e, (
+        "the allowlist must be re-derived by the same command an operator runs"
+    )
+    assert "^EMBED_ORIGINS_REGEX=http://localhost:3000$" in e2e, (
+        "assert the derived pattern, not just the smoke result"
+    )
+    # A `deny` assertion that cannot fail is not an assertion.
+    assert "an open-embed hole (#48)" in e2e
+    assert "${acao:-no access-control-allow-origin}" in e2e
 
 
 # --- the release pipeline itself (#38): a tag is the only thing that ships ---
