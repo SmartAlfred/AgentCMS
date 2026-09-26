@@ -189,15 +189,14 @@ log "caddy: running"
 
 # --- 6. API roundtrip: create site -> publish post -> fetch public URL -----
 
-# --- 6. provision a site: the only shipped mechanism is the seed script (#44) ---
-# The API exposes no POST /v1/sites and the dashboard only UPDATEs the single
-# existing row, so a fresh deployment cannot create a site over HTTP yet (#44).
-# `python -m scripts.seed` (the documented `make seed`) ships in the image and is
-# idempotent; without it there is no site to publish into and the roundtrip below
-# would fail against a perfectly healthy stack.
+# --- 6. provision a site: the seeder, the documented `make seed` --------------
+# `python -m scripts.seed` ships in the image and is idempotent. This job seeds
+# rather than calling POST /v1/sites because every step below needs a site that
+# already has a capability link -- which the seeder prints -- and because a fresh
+# stack has to be usable by an operator who has not minted anything yet.
 log "provisioning the demo site: python -m scripts.seed (the documented \`make seed\` target)"
 if ! seed_out="$(compose exec -T api python -m scripts.seed)"; then
-  die "python -m scripts.seed failed: no API can create a site yet (#44), so the stack has nothing to publish into"
+  die "python -m scripts.seed failed, so the stack has no site to publish into"
 fi
 printf '%s\n' "$seed_out" | sed 's/^/    /'
 site_slug="$(printf '%s\n' "$seed_out" | sed -n 's|.*Demo site: */v1/sites/\([A-Za-z0-9_-]*\).*|\1|p' | head -1)"
@@ -217,6 +216,29 @@ export SMOKE_EMBED_TOKEN="$embed_token"
 bootstrap_admin_token="$(sed -n 's/^ADMIN_TOKEN=//p' "${ENV_FILE}" | tail -1 | tr -d '\r"')"
 [ -n "$bootstrap_admin_token" ] || die "scripts/selfhost.sh wrote no ADMIN_TOKEN into ${ENV_FILE}: the admin surface (token mint, audit) cannot be exercised (#44)"
 export SMOKE_ADMIN_TOKEN="$bootstrap_admin_token"
+
+# --- 6b. #44 regression guard: /v1/admin/* refuses an anonymous caller --------
+#
+# deploy_smoke.sh asserts this too, but this job is the one that boots the
+# *published image*, so it has to fail on its own if the router-level guard ever
+# goes missing again.  The probe is paired with a positive control because
+# app/api/admin_auth.py exempts a loopback peer: a 2xx below is always fatal, and
+# the message names that exemption so a vantage change is loud, never silently green.
+log "asserting /v1/admin/* refuses an anonymous caller (#44)"
+anon_post_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/v1/admin/tokens" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"anonymous-probe","scopes":["posts:read"]}' || true)"
+anon_get_code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL}/v1/admin/tokens" || true)"
+if [ "$anon_post_code" != "401" ] || [ "$anon_get_code" != "401" ]; then
+  die "#44 REGRESSION: anonymous POST /v1/admin/tokens -> ${anon_post_code}, GET -> ${anon_get_code}; both must be 401 (this path mints and lists tokens). If this vantage is loopback-exempt -- app/api/admin_auth.py trusts a loopback peer -- the refusal assertion is invalid here, not absent: probe from a non-loopback peer"
+fi
+mint_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/v1/admin/tokens" \
+  -H "X-Admin-Token: ${bootstrap_admin_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"e2e-positive-control","scopes":["posts:read"]}' || true)"
+[ "$mint_code" = "201" ] || die "#44 POSITIVE CONTROL FAILED: the correct X-Admin-Token got ${mint_code}, want 201 -- a stack that refuses the right secret cannot vouch for the anonymous-refusal assertion above"
+log "admin surface: anonymous POST/GET refused (401/401), authenticated mint 201 (positive control)"
+
 # --- 7. API roundtrip: capability link -> publish post -> public page ---------
 
 log "API roundtrip (minted capability link -> publish post -> public page)"
