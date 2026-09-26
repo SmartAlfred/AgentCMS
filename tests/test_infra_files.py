@@ -1107,3 +1107,32 @@ def test_selfhost_e2e_asserts_the_anonymous_refusal_itself() -> None:
     assert "X-Admin-Token: ${bootstrap_admin_token}" in block, "the positive control must send the secret"
     assert "'201'" in block or '"201"' in block, "the positive control must require 201"
     assert "loopback" in block, "a loopback-exempt vantage must be named, not silently passed"
+
+
+def test_selfhost_e2e_provisions_the_site_through_the_documented_api() -> None:
+    """#45: the deployed path must CREATE its site with ``POST /v1/sites``.
+
+    The E2E used to seed and scrape, so ``POST /v1/sites`` -- the first-run path the
+    quickstart hands a self-hoster -- was exercised by *nothing*: it could 404 without
+    any job noticing.  The site is now created over the API, the slug is read out of
+    the response, and the row is read back; the seeder stays only for the cap_/embed
+    tokens, which no route mints.
+    """
+    body = (REPO_ROOT / "scripts" / "selfhost_e2e.sh").read_text()
+    marker = "provision the demo site through the documented API"
+    assert marker in body, body[:400]
+    block = body.split(marker, 1)[1].split("# --- 7.", 1)[0]
+
+    assert '-X POST "${BASE_URL}/v1/sites"' in block, "the site must be created over the documented API"
+    assert '-H "Authorization: Bearer ${site_admin_token}"' in block, "the create must be authenticated"
+    assert ".token // empty" in block, "a sites token must be minted through the admin surface"
+    assert ".slug // empty" in block, "the slug must be read out of the API response"
+    assert '"${BASE_URL}/v1/sites/${site_slug}"' in block, "the created site must be read back"
+    assert '"$readback_slug" = "$site_slug"' in block, "the read-back must be compared, not just fetched"
+    assert "409" in block, "a --reuse-env re-run must not be reported as a broken route"
+    assert "Embed token (read-only)" in block, "the seeder stays for the tokens the API cannot mint"
+
+    seed_call = "compose exec -T api python -m scripts.seed"
+    assert block.index('-X POST "${BASE_URL}/v1/sites"') < block.index(seed_call), (
+        "the API must create the site BEFORE the seeder runs"
+    )

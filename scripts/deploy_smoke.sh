@@ -186,8 +186,9 @@ log_info "Admin token created: ${ADMIN_TOKEN:0:20}..."
 
 # ---- 4. The site must exist ----
 # This script takes --site-slug and verifies it, because every step below needs a
-# site that already has content. Provisioning is the seeder's job, and the self-host
-# E2E runs it before this script:
+# site that already has content. Provisioning happens in the self-host E2E before
+# this script runs: it creates the site through the documented API (POST /v1/sites)
+# and then runs the seeder for the cap_/embed tokens, which no route mints.
 #   docker compose -f <compose-file> --env-file .env exec -T api python -m scripts.seed
 log_info "Checking that site '${SITE_SLUG}' exists..."
 SITE_PROBE=$(curl -s -o /dev/null -w '%{http_code}' \

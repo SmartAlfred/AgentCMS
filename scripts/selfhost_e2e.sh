@@ -90,7 +90,7 @@ trap cleanup EXIT
 
 # --- 0. preconditions: tooling, daemon, clean checkout ----------------------
 
-for bin in docker curl; do
+for bin in docker curl jq; do
   command -v "$bin" >/dev/null 2>&1 \
     || die "$bin is not installed — the self-host check cannot run, so this is a FAILURE, not a skip"
 done
@@ -189,26 +189,22 @@ log "caddy: running"
 
 # --- 6. API roundtrip: create site -> publish post -> fetch public URL -----
 
-# --- 6. provision a site: the seeder, the documented `make seed` --------------
-# `python -m scripts.seed` ships in the image and is idempotent. This job seeds
-# rather than calling POST /v1/sites because every step below needs a site that
-# already has a capability link -- which the seeder prints -- and because a fresh
-# stack has to be usable by an operator who has not minted anything yet.
-log "provisioning the demo site: python -m scripts.seed (the documented \`make seed\` target)"
-if ! seed_out="$(compose exec -T api python -m scripts.seed)"; then
-  die "python -m scripts.seed failed, so the stack has no site to publish into"
-fi
-printf '%s\n' "$seed_out" | sed 's/^/    /'
-site_slug="$(printf '%s\n' "$seed_out" | sed -n 's|.*Demo site: */v1/sites/\([A-Za-z0-9_-]*\).*|\1|p' | head -1)"
-cap_token="$(printf '%s\n' "$seed_out" | tr -d '\r' | grep -oE 'cap_[A-Za-z0-9_-]+' | head -1)"
-[ -n "$site_slug" ] || die "could not read the seeded site slug from scripts/seed.py output"
-[ -n "$cap_token" ] || die "scripts/seed.py did not print a capability token (see #44)"
+# --- 6. provision the demo site through the documented API (#45) --------------
+#
+# POST /v1/sites is the documented first-run path ("Option B: Via the API",
+# docs/deploy/quickstart.md) and the route exists as of #45.  This step used to
+# say the API could not create a site and seeded instead -- which meant nothing in
+# CI ever called POST /v1/sites, so a regression there shipped green.  The site is
+# now created the way a self-hoster is told to create it: mint an acms_ token
+# through the admin surface, POST /v1/sites, read the slug out of the response,
+# and read the site back before anything is published into it.
+#
+# `python -m scripts.seed` stays for the one thing the API genuinely cannot do:
+# mint the cap_/embed tokens.  No capability-mint route exists -- app.openapi()
+# has no /v1/sites/{slug}/capability-links (docs/deploy/embed.md says so;
+# docs/deploy/quickstart.md used to hand operators a route that was never served).
+site_slug="${SELFHOST_E2E_SITE_SLUG:-blog}"
 
-embed_token="$(printf '%s\n' "$seed_out" | tr -d '\r' | sed -n 's|.*Embed token (read-only): *\(cap_[A-Za-z0-9_-]*\).*|\1|p' | head -1)"
-[ -n "$embed_token" ] || die "could not read the read-only embed token from scripts/seed.py output (the embed surface rejects write tokens)"
-# The embed surface takes a read-only token; export it so the smoke script uses it
-# for /embed/v1/posts and asserts a write token is refused.
-export SMOKE_EMBED_TOKEN="$embed_token"
 # #44: the whole /v1/admin/* surface needs the ADMIN_TOKEN bootstrap secret that
 # scripts/selfhost.sh wrote into .env.  A curl from this host to the published port
 # is NOT a loopback peer (docker forwards it from the bridge gateway), so the smoke
@@ -216,6 +212,61 @@ export SMOKE_EMBED_TOKEN="$embed_token"
 bootstrap_admin_token="$(sed -n 's/^ADMIN_TOKEN=//p' "${ENV_FILE}" | tail -1 | tr -d '\r"')"
 [ -n "$bootstrap_admin_token" ] || die "scripts/selfhost.sh wrote no ADMIN_TOKEN into ${ENV_FILE}: the admin surface (token mint, audit) cannot be exercised (#44)"
 export SMOKE_ADMIN_TOKEN="$bootstrap_admin_token"
+
+log "creating the demo site through the documented API: POST /v1/sites"
+# The sites API authenticates with an acms_ bearer token, not with the bootstrap
+# secret (app/api/v1/sites.py -> require_auth), so mint one first -- the exact
+# sequence the quickstart hands an operator.
+site_admin_token="$(curl -sS -X POST "${BASE_URL}/v1/admin/tokens" \
+  -H "X-Admin-Token: ${bootstrap_admin_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"e2e-site-provision","scopes":["sites:write","sites:read"]}' \
+  | jq -r '.token // empty')"
+[ -n "$site_admin_token" ] || die "POST /v1/admin/tokens minted no sites:write token, so POST /v1/sites cannot be exercised"
+
+create_response="$(curl -sS -w '\n%{http_code}' -X POST "${BASE_URL}/v1/sites" \
+  -H "Authorization: Bearer ${site_admin_token}" \
+  -H "Content-Type: application/json" \
+  -d "{\"slug\":\"${site_slug}\",\"name\":\"Smoke Test Blog\"}")"
+create_status="$(printf '%s\n' "$create_response" | tail -1)"
+create_body="$(printf '%s\n' "$create_response" | sed '$d')"
+# 409 = the site already exists (a --reuse-env run against a warm stack); the
+# read-back below still proves the row is there.  Anything else non-2xx is the
+# documented first-run path being broken, and this job must not pass.
+case "$create_status" in
+  201|200)
+    site_slug="$(printf '%s' "$create_body" | jq -r '.slug // empty')"
+    ;;
+  409) ;;
+  *) die "POST /v1/sites -> ${create_status}: the documented way to create a site is broken (body: ${create_body})" ;;
+esac
+[ -n "$site_slug" ] || die "POST /v1/sites did not return a slug, so the roundtrip cannot be aimed at the created site"
+
+readback_body="$(curl -sS -H "Authorization: Bearer ${site_admin_token}" "${BASE_URL}/v1/sites/${site_slug}")"
+readback_slug="$(printf '%s' "$readback_body" | jq -r '.slug // empty')"
+[ "$readback_slug" = "$site_slug" ] || die "GET /v1/sites/${site_slug} returned slug '${readback_slug}' right after the site was created: the provisioning is not readable back (body: ${readback_body})"
+log "created ${site_slug} via POST /v1/sites and read it back: GET /v1/sites/${site_slug} -> 200"
+
+# --- 6a. the tokens the API cannot mint: `python -m scripts.seed` --------------
+#
+# `make seed` ships in the image and is idempotent: it finds the site created
+# above by slug and reuses it.  It is the only shipped mint for the cap_/embed
+# tokens, and it stays here for that alone.
+log "minting the capability/embed tokens: python -m scripts.seed (the documented \`make seed\` target)"
+if ! seed_out="$(compose exec -T api python -m scripts.seed)"; then
+  die "python -m scripts.seed failed while minting the capability/embed tokens"
+fi
+printf '%s\n' "$seed_out" | sed 's/^/    /'
+seeded_slug="$(printf '%s\n' "$seed_out" | sed -n 's|.*Demo site: */v1/sites/\([A-Za-z0-9_-]*\).*|\1|p' | head -1)"
+[ "$seeded_slug" = "$site_slug" ] || die "POST /v1/sites created '${site_slug}' but scripts/seed.py reports '${seeded_slug}': the documented API and the seeder disagree about the demo site"
+cap_token="$(printf '%s\n' "$seed_out" | tr -d '\r' | grep -oE 'cap_[A-Za-z0-9_-]+' | head -1)"
+[ -n "$cap_token" ] || die "scripts/seed.py did not print a capability token (see #44)"
+
+embed_token="$(printf '%s\n' "$seed_out" | tr -d '\r' | sed -n 's|.*Embed token (read-only): *\(cap_[A-Za-z0-9_-]*\).*|\1|p' | head -1)"
+[ -n "$embed_token" ] || die "could not read the read-only embed token from scripts/seed.py output (the embed surface rejects write tokens)"
+# The embed surface takes a read-only token; export it so the smoke script uses it
+# for /embed/v1/posts and asserts a write token is refused.
+export SMOKE_EMBED_TOKEN="$embed_token"
 
 # --- 6b. #44 regression guard: /v1/admin/* refuses an anonymous caller --------
 #

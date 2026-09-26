@@ -104,7 +104,7 @@ require_site() {
     "${BASE_URL}/v1/sites/${SITE_SLUG}/posts")
   if [[ "$code" != "200" ]]; then
     log_error "No site '${SITE_SLUG}' (GET /v1/sites/${SITE_SLUG}/posts -> ${code})"
-    log_error "#44: the API cannot create a site yet -- seed it: python -m scripts.seed"
+    log_error "#45: create it over the API (POST /v1/sites) or seed it: python -m scripts.seed"
     return 1
   fi
   echo "$SITE_SLUG"
