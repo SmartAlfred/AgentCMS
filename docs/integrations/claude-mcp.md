@@ -59,17 +59,17 @@ In Cursor Settings → MCP Servers, add:
 
 If your AgentCMS instance is hosted remotely and you want to use the same MCP endpoint from multiple clients, use the built-in `/mcp` endpoint.
 
-### Get a Capability Link
+### Get a Token
 
-1. Create a capability link with the needed verbs:
+1. Mint a token with the scopes the tools need:
    ```bash
-   curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
-     -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+   curl -X POST https://your-agentcms.example.com/v1/admin/tokens \
+     -H "X-Admin-Token: $ADMIN_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"site_slug": "blog", "verbs": ["posts:read", "posts:write", "posts:publish"], "ttl_minutes": 10080}'
+     -d '{"label": "claude-desktop", "scopes": ["posts:read", "posts:write", "posts:publish"], "expires_in_days": 7}'
    ```
 
-2. Copy the returned `cap_...` token.
+2. Copy the returned `acms_...` token.
 
 ### Configure Client with Capability Token URL
 

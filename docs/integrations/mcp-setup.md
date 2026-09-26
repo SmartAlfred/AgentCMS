@@ -35,34 +35,37 @@ Two transport options:
 
 ---
 
-## Step 1: Create a Capability Link
+## Step 1: Mint a Token
 
-Capability links are pre-scoped tokens that work without header management — perfect for MCP.
+MCP clients are pre-scoped tokens that work without header management — perfect for MCP.
+Mint one with `POST /v1/admin/tokens`; a `cap_...` capability link works the same way
+(no HTTP route mints those yet — the seeder does: `python -m scripts.seed`).
 
 ```bash
-curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+curl -X POST https://your-agentcms.example.com/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "site_slug": "blog",
-    "verbs": ["posts:read", "posts:write", "posts:publish"],
-    "ttl_minutes": 10080,
-    "label": "Claude Desktop MCP"
+    "label": "Claude Desktop MCP",
+    "scopes": ["posts:read", "posts:write", "posts:publish"],
+    "expires_in_days": 7
   }'
 ```
 
 **Response:**
 ```json
 {
-  "token": "cap_blog_abc123...",
+  "token": "acms_...",
+  "id": "0f6c2d5a-...",
+  "actor_id": "9b1e...",
   "label": "Claude Desktop MCP",
-  "verbs": ["posts:read", "posts:write", "posts:publish"],
+  "scopes": ["posts:read", "posts:write", "posts:publish"],
   "expires_at": "2026-10-01T00:00:00Z",
-  "instruction_url": "https://your-agentcms.example.com/c/cap_blog_abc123..."
+  "created_at": "2026-09-24T00:00:00Z"
 }
 ```
 
-Copy the `token` value (starts with `cap_`).
+Copy the `token` value (starts with `acms_`; `cap_...` capability links work too).
 
 ### Verb Reference
 
@@ -295,7 +298,8 @@ echo '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"publish_po
 - Use `cap_...` tokens (not `acms_...` API tokens) for MCP
 - Tokens embed site slug — a token for `blog` cannot access `docs`
 - Set `ttl_minutes` and `uses_remaining` for automatic expiry
-- Revoke via `DELETE /v1/admin/capability-links/{id}` if compromised
+- Revoke via `DELETE /v1/admin/tokens/{token_id}` if compromised (a capability link
+  is a token record; send it with `X-Admin-Token`)
 - Never log full tokens — the server redacts automatically
 
 ---
@@ -306,15 +310,15 @@ echo '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"publish_po
 # 1. Start AgentCMS locally
 make dev
 
-# 2. Create local capability link (requires admin token)
-curl -X POST http://localhost:8000/v1/admin/capability-links \
-  -H "Authorization: Bearer acms_local_admin_token" \
+# 2. Mint a token with the scopes MCP needs (ADMIN_TOKEN is the bootstrap secret in .env)
+curl -X POST http://localhost:8000/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"site_slug": "blog", "verbs": ["posts:read", "posts:write", "posts:publish"]}'
+  -d '{"label": "mcp-local", "scopes": ["posts:read", "posts:write", "posts:publish"]}'
 
 # 3. Run MCP server
 export AGENTCMS_BASE_URL=http://localhost:8000
-export AGENTCMS_TOKEN=cap_...  # from step 2
+export AGENTCMS_TOKEN=acms_...  # from step 2
 python -m app.mcp.server
 
 # 4. Test with MCP Inspector

@@ -14,18 +14,18 @@ pipx install agentcms-mcp
 pip install agentcms-mcp
 ```
 
-### 2. Create a Capability Link
+### 2. Mint a Token
 
 In your AgentCMS instance:
 
 ```bash
-curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+curl -X POST https://your-agentcms.example.com/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"site_slug": "blog", "verbs": ["posts:read", "posts:write", "posts:publish"], "ttl_minutes": 10080}'
+  -d '{"label": "cursor", "scopes": ["posts:read", "posts:write", "posts:publish"], "expires_in_days": 7}'
 ```
 
-Copy the `cap_...` token from the response.
+Copy the `acms_...` token from the response.
 
 ### 3. Add to Cursor Settings
 
@@ -193,14 +193,14 @@ For local development with the demo:
 # Terminal 1: Start AgentCMS
 make dev
 
-# Terminal 2: Create a local capability link
-curl -X POST http://localhost:8000/v1/admin/capability-links \
-  -H "Authorization: Bearer acms_local_token" \
+# Terminal 2: Mint a local token (ADMIN_TOKEN is the bootstrap secret in .env)
+curl -X POST http://localhost:8000/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"site_slug": "blog", "verbs": ["posts:read", "posts:write", "posts:publish"]}'
+  -d '{"label": "cursor-local", "scopes": ["posts:read", "posts:write", "posts:publish"]}'
 
 # Terminal 3: Run MCP server with the returned token
 export AGENTCMS_BASE_URL=http://localhost:8000
-export AGENTCMS_TOKEN=cap_...
+export AGENTCMS_TOKEN=acms_...
 agentcms-mcp
 ```

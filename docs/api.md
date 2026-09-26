@@ -483,11 +483,13 @@ AgentCMS exposes an MCP server so AI agents (Claude, Cursor, ChatGPT Desktop) ca
 # 1. Install
 pipx install agentcms-mcp
 
-# 2. Create capability link with needed verbs
-curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
-  -H "Authorization: Bearer ADMIN_TOKEN" \
+# 2. Mint a token with the scopes the tools need. The client accepts an acms_...
+#    token from POST /v1/admin/tokens, or a pre-scoped cap_... capability link
+#    (no HTTP route mints those yet -- the seeder does: python -m scripts.seed).
+curl -X POST https://your-agentcms.example.com/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"site_slug": "blog", "verbs": ["posts:read", "posts:write", "posts:publish"]}'
+  -d '{"label": "claude-desktop", "scopes": ["posts:read", "posts:write", "posts:publish"]}'
 
 # 3. Configure client (Claude Desktop example)
 # ~/.config/claude/claude_desktop_config.json:
@@ -497,7 +499,7 @@ curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
       "command": "agentcms-mcp",
       "env": {
         "AGENTCMS_BASE_URL": "https://your-agentcms.example.com",
-        "AGENTCMS_TOKEN": "cap_blog_abc123..."
+        "AGENTCMS_TOKEN": "acms_..."
       }
     }
   }

@@ -145,8 +145,10 @@ Expected output:
 Use the dashboard at `https://agentcms-api.onrender.com/dashboard` or API:
 
 ```bash
-# Create admin token (one-time, save it!)
+# Create admin token (one-time, save it!). The admin surface is authenticated by
+# the ADMIN_TOKEN bootstrap secret from your Render env vars (#44).
 curl -X POST https://agentcms-api.onrender.com/v1/admin/tokens \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"label": "admin", "scopes": ["posts:read", "posts:write", "posts:publish", "assets:write"]}'
 
@@ -156,11 +158,11 @@ curl -X POST https://agentcms-api.onrender.com/v1/sites \
   -H "Content-Type: application/json" \
   -d '{"slug": "blog", "name": "My Blog", "publish_mode": "auto"}'
 
-# Create a capability link for embedding (read-only)
-curl -X POST https://agentcms-api.onrender.com/v1/sites/blog/capability-links \
-  -H "Authorization: Bearer acms_..." \
-  -H "Content-Type: application/json" \
-  -d '{"label": "embed", "verbs": ["posts:read"], "ttl_minutes": 525600}'
+# Mint the read-only embed token. No HTTP route mints a cap_... capability link
+# yet, so run the seeder in your service Shell (Render dashboard -> your service ->
+# Shell). It prints the embed token for the demo site `blog`.
+python -m scripts.seed
+#   Embed token (read-only): cap_blog_yyyyyyyy
 ```
 
 ## 10. Embed in Your Site

@@ -83,18 +83,18 @@ make selfhost-verify
 
 2. **Create a Capability Link for Embedding** — The embed script needs a **read-only** capability token (`posts:read` scope).
 
-   Via Dashboard:
-   1. Go to your site → Capability Links → Create Link
-   2. Label: `embed`, Verbs: `posts:read`, TTL: 1 year (525600 minutes)
-   3. Copy the `cap_blog_xxx...` token
+   No HTTP route and no dashboard screen mints a `cap_...` capability link yet, so
+   the seeder is the shipped mint — it prints a read-only token for the demo site:
 
-   Via API:
    ```bash
-   curl -X POST https://your-domain.com/v1/sites/blog/capability-links \
-     -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"label":"embed","verbs":["posts:read"],"ttl_minutes":525600}'
+   docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
+     exec -T api python -m scripts.seed
+   #   Embed token (read-only): cap_blog_yyyyyyyy
    ```
+
+   Use the **read-only** token — `/embed/v1/posts` rejects a write token. Capability
+   links are stored as tokens, so `GET`/`DELETE /v1/admin/tokens/{token_id}` (with
+   `X-Admin-Token`) lists and revokes them.
 
 3. **Embed in Your Site** — Add **one script tag** to any page — no build step, no npm, no framework:
 

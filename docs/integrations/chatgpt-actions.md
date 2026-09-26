@@ -8,14 +8,15 @@ This document provides the OpenAPI Actions manifest and system prompt for creati
 
 ## Quick Setup (3 steps)
 
-1. **Create a capability link** in AgentCMS with `posts:write` and `posts:publish` verbs:
+1. **Mint a token** in AgentCMS with the `posts:write` and `posts:publish` scopes:
    ```bash
-   curl -X POST https://your-agentcms.example.com/v1/admin/capability-links \
-     -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+   curl -X POST https://your-agentcms.example.com/v1/admin/tokens \
+     -H "X-Admin-Token: $ADMIN_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"site_slug": "blog", "verbs": ["posts:write", "posts:publish"], "ttl_minutes": 10080}'
+     -d '{"label": "chatgpt-actions", "scopes": ["posts:write", "posts:publish"], "expires_in_days": 7}'
    ```
-   Copy the returned `cap_...` token.
+   Copy the returned `acms_...` token (a `cap_...` capability link works too; the
+   seeder mints those).
 
 2. **Create a Custom GPT** in ChatGPT:
    - Go to **Explore GPTs → Create**
@@ -85,7 +86,7 @@ Copy this entire JSON into the **Schema** field in the Custom GPT Actions config
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Capability token (cap_...)",
-        "description": "Capability token from /c/{token} link or POST /v1/admin/capability-links"
+        "description": "Bearer token minted by POST /v1/admin/tokens (acms_...) or a cap_... capability link"
       }
     }
   },

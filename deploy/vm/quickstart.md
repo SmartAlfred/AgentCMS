@@ -213,11 +213,13 @@ curl -X POST https://cms.example.com/v1/sites \
   -H "Content-Type: application/json" \
   -d '{"slug":"blog","name":"My Blog","publish_mode":"auto"}'
 
-# Create embed capability link (read-only, 1 year TTL)
-curl -X POST https://cms.example.com/v1/sites/blog/capability-links \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"label":"embed","verbs":["posts:read"],"ttl_minutes":525600}'
+# Mint the read-only embed token. No HTTP route mints a cap_... capability link
+# yet, so run the seeder on the VM -- it prints the embed token for the demo site
+# `blog` (the ADMIN_TOKEN token above carries posts:write and is rejected by
+# /embed/v1/posts).
+docker compose --env-file .env -f deploy/compose/docker-compose.prod.yml \
+  exec -T api python -m scripts.seed
+#   Embed token (read-only): cap_blog_yyyyyyyy
 ```
 
 ## 8. Embed in Your Site

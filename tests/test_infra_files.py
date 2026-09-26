@@ -1136,3 +1136,134 @@ def test_selfhost_e2e_provisions_the_site_through_the_documented_api() -> None:
     assert block.index('-X POST "${BASE_URL}/v1/sites"') < block.index(seed_call), (
         "the API must create the site BEFORE the seeder runs"
     )
+
+
+# ---------------------------------------------------------------------------
+# #51: every /v1 route a doc or a quickstart names must be one the API serves
+# ---------------------------------------------------------------------------
+#
+# The same defect class the script guard above covers, one surface further out: 12
+# doc sites taught a capability-links HTTP route that has never existed (the seeder
+# mints those links), including a "revoke it here" line for a leaked token.  A doc
+# that 404s wastes an operator's afternoon, so the route set again comes from the
+# artefact the product serves -- ``app.openapi()["paths"]`` plus the schema-invisible
+# routes -- never from ``app.routes`` (opaque ``_IncludedRouter`` wrappers).
+
+_DOC_V1_FILES = ("README.md",)
+_DOC_V1_GLOBS = ("docs/**/*.md", "deploy/**/*.md")
+# A quickstart is copy-pasted by an operator, so a *literal* where the API declares a
+# path parameter is drift there (the reader's site is not named `blog`).  The API
+# reference under docs/ uses example values on purpose and is held only to "the route
+# exists".
+_DOC_V1_PLACEHOLDER_SCOPE = ("README.md", "deploy/")
+_DOC_V1_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+# Three shapes, because a URL in a doc can be built from a variable, spelled out
+# absolutely, or written as a bare path.  The third pattern's lookbehind keeps the
+# *embed* prefix out of it: `/embed/v1/posts` is not an API route.
+_DOC_V1_URLS = (
+    re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}(/v1/[A-Za-z0-9_./${}*\-]*)"),
+    re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://[^/\s\"'`]+(/v1/[A-Za-z0-9_./${}*\-]*)"),
+    re.compile(r"(?<![A-Za-z0-9_./${}\-])(/v1/[A-Za-z0-9_./${}*\-]*)"),
+)
+# A prose line counts as a call only when it puts a method in front of the path
+# (`POST /v1/...`), so a mention of the `/v1/admin/*` surface is not a route claim.
+_DOC_V1_PROSE_CALL = re.compile(r"\b(?:" + "|".join(_DOC_V1_METHODS) + r")\s+\S{0,40}?/v1/")
+# ...unless the same line says, right after the path, that the route does not exist.
+_DOC_V1_ABSENT_AFTER = re.compile(
+    r"\A[\s\W]{0,4}(?:has\s+)?(?:never\s+existed|is\s+absent|are\s+absent"
+    r"|does\s+not\s+exist|doesn't\s+exist|is\s+not\s+served|was\s+never|no\s+such)",
+    re.IGNORECASE,
+)
+
+
+def _doc_v1_files() -> list[Path]:
+    files = [REPO_ROOT / name for name in _DOC_V1_FILES]
+    for pattern in _DOC_V1_GLOBS:
+        files.extend(sorted(REPO_ROOT.glob(pattern)))
+    return sorted(files)
+
+
+def _doc_v1_calls() -> list[tuple[str, int, str]]:
+    """``(file, line, path)`` for every /v1 URL a doc actually builds.
+
+    Lines that only mention a route are skipped, and backslash continuations are
+    joined first so a call and its URL are read as one line.
+    """
+    calls: set[tuple[str, int, str]] = set()
+    for path in _doc_v1_files():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        lines = path.read_text().splitlines()
+        in_fence = False
+        index = 0
+        while index < len(lines):
+            raw = lines[index]
+            head = index + 1
+            if raw.strip().startswith("```"):
+                in_fence = not in_fence
+                index += 1
+                continue
+            line = raw
+            while line.rstrip().endswith("\\") and index + 1 < len(lines):
+                index += 1
+                line = line.rstrip()[:-1] + " " + lines[index].strip()
+            index += 1
+            if "/v1/" not in line or line.strip().startswith("#"):
+                continue
+            if not (in_fence or "curl" in line or _DOC_V1_PROSE_CALL.search(line)):
+                continue
+            for pattern in _DOC_V1_URLS:
+                for match in pattern.finditer(line):
+                    target = match.group(1).split("?", 1)[0].rstrip(".")
+                    target = target.rstrip("/") or "/"
+                    if "*" in target:  # `/v1/admin/*` names a surface, not a route
+                        continue
+                    if _DOC_V1_ABSENT_AFTER.match(line[match.end() :]):
+                        continue
+                    calls.add((rel, head, target))
+    return sorted(calls)
+
+
+def _route_shape(template: str) -> re.Pattern[str]:
+    """``/v1/sites/{site_slug}/posts`` -> a pattern that also accepts ``/v1/sites/blog/posts``.
+
+    A documented example legitimately fills a parameter with a value; what must not
+    happen is a *route* that no template can produce (``/v1/sites/blog/capability-links``).
+    """
+    parts = []
+    for segment in template.rstrip("/").split("/"):
+        parts.append("[^/]+" if _PATH_PARAM.fullmatch(segment) else re.escape(segment))
+    return re.compile("/".join(parts) + r"\Z")
+
+
+def test_docs_only_reference_v1_routes_the_app_serves() -> None:
+    """A doc that names a route the API does not serve must fail here, not in a deploy."""
+    from app.main import app
+
+    templates = list(app.openapi()["paths"]) + list(_SCHEMA_INVISIBLE_SCRIPT_ROUTES)
+    served = {_template(path) for path in templates}
+    shapes = [_route_shape(path) for path in templates]
+
+    calls = _doc_v1_calls()
+    normalised = {_template(call[2]) for call in calls}
+    # A guard whose discovery silently stops matching approves everything: assert the
+    # load-bearing references were found before believing any of the rest.
+    assert "/v1/admin/tokens" in normalised, sorted(normalised)
+    assert "/v1/version" in normalised, sorted(normalised)
+    assert any(p.startswith("/v1/sites/") and p.endswith("/posts") for p in normalised), sorted(normalised)
+
+    unserved = []
+    hardcoded = []
+    for doc, line, target in calls:
+        if not any(shape.match(target) for shape in shapes):
+            unserved.append(f"{doc}:{line} -> {target}")
+        elif doc.startswith(_DOC_V1_PLACEHOLDER_SCOPE) and _template(target) not in served:
+            hardcoded.append(f"{doc}:{line} -> {target}")
+    assert not unserved, (
+        "these docs name a /v1 route the API does not serve, so the call 404s:\n  "
+        + "\n  ".join(unserved)
+        + "\nName the served route, the seeder mint, or say the route is absent."
+    )
+    assert not hardcoded, (
+        "these quickstart lines hardcode a value where the API declares a path parameter "
+        "(use a placeholder such as {site_slug}):\n  " + "\n  ".join(hardcoded)
+    )
