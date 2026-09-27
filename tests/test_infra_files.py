@@ -817,6 +817,52 @@ def test_drill_reaps_the_servers_a_killed_run_left_behind(tmp_path: Path) -> Non
     assert fresh.exists(), "a concurrent test's server must never be touched"
 
 
+def test_drill_reaps_the_containers_a_killed_run_left_behind() -> None:
+    """A killed drill must not leave its throwaway container holding a host port (#39 twin).
+
+    `docker run -d --rm --name agentcms-drill-pg-<hex>` removes itself only when the run
+    *ends*, so a pytest killed mid-run (the harness's 4800 s cap, a watchdog, Ctrl-C --
+    the finalizer never runs) leaves the container `Up` forever, with `--rm` never firing
+    and its published port still bound. Measured on 2026-09-27: 30 such orphans (19 from
+    2026-09-25, 9 from 2026-09-26, all 0.00-0.02% CPU, no compose labels). The datadir
+    reaper could not see them: it globs `agentcms-drill-pgdata-*` and was reached only
+    from the local-initdb branch, which a docker-capable machine never takes.
+    """
+    from tests.test_backup_restore_drill import _reap_orphan_containers
+
+    source = (REPO_ROOT / "tests" / "test_backup_restore_drill.py").read_text()
+    call = "containers = _reap_orphan_containers()"
+    assert call in source, (
+        "a throwaway server must reap the last killed run's orphaned containers before it starts"
+    )
+    # ...and the reap must sit *before* the strategy branches. Inside the local-initdb
+    # branch a docker-capable machine never reaches it -- that placement is the bug.
+    assert source.index(call) < source.index("if docker_available():"), (
+        "the container reap must run regardless of which strategy the machine picks"
+    )
+
+    removed: list[str] = []
+
+    def fake_remover(name: str) -> int:
+        removed.append(name)
+        return 0
+
+    reaped = _reap_orphan_containers(
+        min_age_seconds=600,
+        entries=[
+            ("agentcms-drill-pg-1a2b3c4d", 7200.0),  # a killed run's leftover: stale
+            ("agentcms-drill-pg-5e6f7a8b", 5.0),  # the run in flight: fresh, hands off
+            ("agentcms-drill-pg-c0ffee00", 599.9),  # just under the threshold: not yet
+            ("agentcms-prod-pg-1", 86400.0),  # not ours -- the name is the contract
+        ],
+        remover=fake_remover,
+    )
+    assert reaped == ["agentcms-drill-pg-1a2b3c4d"], reaped
+    assert removed == ["agentcms-drill-pg-1a2b3c4d"], (
+        "only a stale throwaway drill container may be force-removed"
+    )
+
+
 def test_selfhost_e2e_reads_base64url_capability_tokens_whole() -> None:
     """#37/#44: capability tokens are base64url, so ``-`` and ``_`` are legal characters.
 

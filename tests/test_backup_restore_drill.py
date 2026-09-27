@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -18,12 +19,19 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PG_IMAGE = os.environ.get("TEST_POSTGRES_IMAGE", "postgres:16-alpine")
+DRILL_CONTAINER_PREFIX = "agentcms-drill-pg-"
+# The *name* is the contract: `agentcms-drill-pg-<hex>` is what `_postgres_server_inner`
+# starts. Reaping by image would also match a self-hoster's own `postgres:16-alpine`
+# stack, where `docker rm -f` is data loss, not cleanup.
+_DRILL_CONTAINER_RE = re.compile(rf"/?{DRILL_CONTAINER_PREFIX}[0-9a-f]+$")
 _LOCAL_PG_BIN_GLOBS = (
     "/opt/homebrew/opt/postgresql@16/bin",
     "/opt/homebrew/opt/postgresql@18/bin",
@@ -256,6 +264,89 @@ def _ps_command(pid: int) -> str:
     ).stdout
 
 
+def _is_drill_container(name: str) -> bool:
+    """True for the throwaway containers this suite starts, and nothing else."""
+    return _DRILL_CONTAINER_RE.match(name.strip()) is not None
+
+
+def _container_age_seconds(created: str, now: float | None = None) -> float | None:
+    """Age in seconds of one `docker inspect .Created` (RFC 3339) timestamp, or None."""
+    match = re.match(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})$",
+        created.strip(),
+    )
+    if match is None:
+        return None
+    stamp, zone = match.groups()
+    zone = "+00:00" if zone == "Z" else (zone if ":" in zone else f"{zone[:3]}:{zone[3:]}")
+    try:
+        started = datetime.fromisoformat(f"{stamp}{zone}")
+    except ValueError:
+        return None
+    return (time.time() if now is None else now) - started.timestamp()
+
+
+def _drill_container_entries() -> list[tuple[str, float]]:
+    """(name, age in seconds) for every throwaway drill container Docker still knows about.
+
+    `.Created` from `docker inspect` is RFC 3339 and needs no locale guess, unlike
+    `docker ps`'s `.CreatedAt` (a rendered local-time string). An unreadable timestamp
+    is dropped rather than guessed: a wrong age could delete a *running* test's database.
+    """
+    listed = _run(
+        ["docker", "ps", "-a", "--filter", f"name={DRILL_CONTAINER_PREFIX}", "--format", "{{.Names}}"]
+    )
+    if listed.returncode != 0:
+        return []
+    names = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    if not names:
+        return []
+    inspected = _run(["docker", "inspect", "--format", "{{.Name}}\t{{.Created}}", *names])
+    if inspected.returncode != 0:
+        return []
+    entries: list[tuple[str, float]] = []
+    for line in inspected.stdout.splitlines():
+        name, _, created = line.partition("\t")
+        age = _container_age_seconds(created)
+        if name.strip() and age is not None:
+            entries.append((name.strip().lstrip("/"), age))
+    return entries
+
+
+def _reap_orphan_containers(
+    min_age_seconds: int = 600,
+    entries: list[tuple[str, float]] | None = None,
+    remover: Callable[[str], int] | None = None,
+) -> list[str]:
+    """Force-remove throwaway drill *containers* a killed run left behind.
+
+    The twin of `_reap_orphan_servers`: `docker run -d --rm --name
+    agentcms-drill-pg-<hex>` removes its container only when the run *ends*, so a
+    pytest killed mid-run (the harness's 4800 s cap, a watchdog, Ctrl-C -- the
+    finalizer never runs) leaves it `Up` with its published host port held for good.
+    Measured 2026-09-27: 30 such orphans (19 from 2026-09-25, 9 from 2026-09-26, all
+    0.00-0.02% CPU, no compose labels) -- `_reap_orphan_servers` cannot see them, it
+    globs *datadirs* and is reached only on the local-initdb path, while a
+    docker-capable machine takes the Docker path instead.
+
+    Only containers older than `min_age_seconds` are touched, so a concurrent run's
+    own server survives. `entries`/`remover` exist so the guard test can drive the
+    selection without Docker; both default to the real thing.
+    """
+    if entries is None:
+        if shutil.which("docker") is None:
+            return []
+        entries = _drill_container_entries()
+    remove = remover or (lambda name: _run(["docker", "rm", "-f", name]).returncode)
+    reaped: list[str] = []
+    for name, age in sorted(entries):
+        if not _is_drill_container(name) or age < min_age_seconds:
+            continue
+        if remove(name) == 0:
+            reaped.append(name)
+    return reaped
+
+
 def _local_server_options(port: int, sockdir: Path) -> str:
     """`pg_ctl -o` options for the throwaway drill server (one place, one truth).
 
@@ -274,6 +365,17 @@ def _local_server_options(port: int, sockdir: Path) -> str:
 @contextlib.contextmanager
 def _postgres_server_inner(db_name: str):
     """Start a throwaway PostgreSQL server (external, Docker, or local initdb) for the drill."""
+    # Reap *before* choosing a strategy. The datadir reap used to sit in the local-initdb
+    # branch, so a docker-capable machine (which takes the Docker branch) never ran it --
+    # and its container twin was never reached at all. Both reaps only touch servers and
+    # containers far older than any live test, so this is safe on every path.
+    orphans = _reap_orphan_servers()
+    if orphans:
+        print(f"reaped {len(orphans)} orphaned drill server(s): {', '.join(orphans)}", flush=True)
+    containers = _reap_orphan_containers()
+    if containers:
+        print(f"reaped {len(containers)} orphaned drill container(s): {', '.join(containers)}", flush=True)
+
     # Strategy 1: Use TEST_DATABASE_URL if provided (CI service container)
     external = os.environ.get("TEST_DATABASE_URL")
     if external:
@@ -376,10 +478,6 @@ def _postgres_server_inner(db_name: str):
     bindir = _local_pg_bin()
     if bindir is None:
         pytest.skip("No PostgreSQL available (no Docker, no initdb/pg_ctl)")
-
-    orphans = _reap_orphan_servers()
-    if orphans:
-        print(f"reaped {len(orphans)} orphaned drill server(s): {', '.join(orphans)}", flush=True)
 
     datadir = Path(tempfile.mkdtemp(prefix="agentcms-drill-pgdata-"))
     sockdir = Path(tempfile.mkdtemp(prefix="agentcms-drill-pgsock-"))
