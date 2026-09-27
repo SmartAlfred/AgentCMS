@@ -14,6 +14,7 @@ must never leave state behind.  Strategy, in order of preference:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -23,6 +24,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -114,6 +116,116 @@ class EphemeralPostgres:
 
 def _cleanup_docker(container: str) -> None:
     _run(["docker", "rm", "-f", container])
+
+
+# The *name* is the contract: `agentcms-drill-pg-<hex>` is what
+# `test_backup_restore_drill._postgres_server_inner` starts, `agentcms-test-pg-<hex>` what
+# `start_docker_postgres` starts for the whole session. Both families leak the same way, so
+# both are in one documented tuple, one entry per family. Reaping by *image* would instead
+# match a self-hoster's own `postgres:16-alpine` stack, where `docker rm -f` is data loss,
+# not cleanup -- so a name outside this contract is never reaped.
+DRILL_CONTAINER_PREFIX = "agentcms-drill-pg-"
+SUITE_CONTAINER_PREFIX = "agentcms-test-pg-"
+TEST_CONTAINER_PREFIXES = (DRILL_CONTAINER_PREFIX, SUITE_CONTAINER_PREFIX)
+_TEST_CONTAINER_RE = re.compile(
+    "|".join(rf"/?{re.escape(prefix)}[0-9a-f]+$" for prefix in TEST_CONTAINER_PREFIXES)
+)
+
+
+def _is_reapable_test_container(name: str) -> bool:
+    """True for a throwaway container this repo started, and nothing else."""
+    return _TEST_CONTAINER_RE.match(name.strip()) is not None
+
+
+def _container_age_seconds(created: str, now: float | None = None) -> float | None:
+    """Age in seconds of one `docker inspect .Created` (RFC 3339) timestamp, or None."""
+    match = re.match(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})$",
+        created.strip(),
+    )
+    if match is None:
+        return None
+    stamp, zone = match.groups()
+    zone = "+00:00" if zone == "Z" else (zone if ":" in zone else f"{zone[:3]}:{zone[3:]}")
+    try:
+        started = datetime.fromisoformat(f"{stamp}{zone}")
+    except ValueError:
+        return None
+    return (time.time() if now is None else now) - started.timestamp()
+
+
+def _test_container_entries() -> list[tuple[str, float]]:
+    """(name, age in seconds) for every throwaway test container Docker still knows about.
+
+    One listing per prefix, so each selector stays as narrow as the name contract, and
+    only names `_is_reapable_test_container` accepts are kept. `.Created` from
+    `docker inspect` is RFC 3339 and needs no locale guess, unlike `docker ps`'s
+    `.CreatedAt` (a rendered local-time string). Fail closed: an unreadable listing, a name
+    outside the contract or an unparseable timestamp reaps nothing rather than guessing --
+    a wrong age could delete a *running* run's server.
+    """
+    names: list[str] = []
+    for prefix in TEST_CONTAINER_PREFIXES:
+        listed = _run(["docker", "ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}"])
+        if listed.returncode != 0:
+            return []
+        names.extend(
+            line.strip()
+            for line in listed.stdout.splitlines()
+            if line.strip() and _is_reapable_test_container(line)
+        )
+    if not names:
+        return []
+    inspected = _run(["docker", "inspect", "--format", "{{.Name}}\t{{.Created}}", *names])
+    if inspected.returncode != 0:
+        return []
+    entries: list[tuple[str, float]] = []
+    for line in inspected.stdout.splitlines():
+        name, _, created = line.partition("\t")
+        age = _container_age_seconds(created)
+        if name.strip() and age is not None:
+            entries.append((name.strip().lstrip("/"), age))
+    return entries
+
+
+def _reap_orphan_containers(
+    min_age_seconds: int = 600,
+    entries: list[tuple[str, float]] | None = None,
+    remover: Callable[[str], int] | None = None,
+) -> list[str]:
+    """Force-remove throwaway *containers* a killed run left behind -- both families.
+
+    `docker run -d --rm --name <prefix><hex>` removes its container only when the run
+    *ends*, so a pytest killed mid-run (the harness's 4800 s cap, a watchdog, Ctrl-C --
+    the finalizer never runs) leaves it `Up` with its published host port held for good.
+    The datadir reaper cannot see either family: it globs `agentcms-drill-pgdata-*` and is
+    reached only on the local-initdb path, while a docker-capable machine takes the Docker
+    path instead.
+
+    Two families leak this way: the drill's `agentcms-drill-pg-*`, and the suite's own
+    session server `agentcms-test-pg-*` started by `start_docker_postgres`. Measured for
+    the drill family on 2026-09-27: 30 orphans (19 from 2026-09-25, 9 from 2026-09-26, all
+    0.00-0.02% CPU, no compose labels). The suite family had **no** measured orphan on
+    2026-09-27 -- the host carried 0 of both families that day -- so its selection was
+    proved by leaving a fresh `agentcms-test-pg-*` behind on purpose and watching this
+    reaper take it.
+
+    Only containers older than `min_age_seconds` are touched, so a concurrent run's own
+    server survives. `entries`/`remover` exist so the guard test can drive the selection
+    without Docker; both default to the real thing.
+    """
+    if entries is None:
+        if shutil.which("docker") is None:
+            return []
+        entries = _test_container_entries()
+    remove = remover or (lambda name: _run(["docker", "rm", "-f", name]).returncode)
+    reaped: list[str] = []
+    for name, age in sorted(entries):
+        if not _is_reapable_test_container(name) or age < min_age_seconds:
+            continue
+        if remove(name) == 0:
+            reaped.append(name)
+    return reaped
 
 
 def start_docker_postgres() -> EphemeralPostgres:
@@ -277,6 +389,16 @@ def start_initdb_postgres() -> EphemeralPostgres:
 
 def start_ephemeral_postgres() -> EphemeralPostgres:
     """Return a fresh server, using whichever strategy this machine supports."""
+
+    # Reap before choosing a strategy. `docker run -d --rm` removes a container only when
+    # the run *ends*, and a pytest killed mid-run (harness cap, watchdog, Ctrl-C) never
+    # reaches the session finalizer in conftest -- so the last killed run's
+    # `agentcms-test-pg-*` server is still `Up`, holding its host port, with `--rm` never
+    # firing. This sits above every branch so a docker-capable machine reaps too: the
+    # datadir reap only runs on the local-initdb path below.
+    orphans = _reap_orphan_containers()
+    if orphans:
+        print(f"reaped {len(orphans)} orphaned test container(s): {', '.join(orphans)}", flush=True)
 
     external = os.environ.get("TEST_DATABASE_URL")
     if external:

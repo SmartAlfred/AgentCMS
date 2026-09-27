@@ -818,28 +818,55 @@ def test_drill_reaps_the_servers_a_killed_run_left_behind(tmp_path: Path) -> Non
 
 
 def test_drill_reaps_the_containers_a_killed_run_left_behind() -> None:
-    """A killed drill must not leave its throwaway container holding a host port (#39 twin).
+    """A killed run must not leave its throwaway container holding a host port (#39 twin).
 
-    `docker run -d --rm --name agentcms-drill-pg-<hex>` removes itself only when the run
-    *ends*, so a pytest killed mid-run (the harness's 4800 s cap, a watchdog, Ctrl-C --
-    the finalizer never runs) leaves the container `Up` forever, with `--rm` never firing
-    and its published port still bound. Measured on 2026-09-27: 30 such orphans (19 from
-    2026-09-25, 9 from 2026-09-26, all 0.00-0.02% CPU, no compose labels). The datadir
-    reaper could not see them: it globs `agentcms-drill-pgdata-*` and was reached only
-    from the local-initdb branch, which a docker-capable machine never takes.
+    `docker run -d --rm --name <prefix><hex>` removes itself only when the run *ends*, so
+    a pytest killed mid-run (the harness's 4800 s cap, a watchdog, Ctrl-C -- the finalizer
+    never runs) leaves the container `Up` forever, with `--rm` never firing and its
+    published port still bound. **Two families** leak this way: the drill's
+    `agentcms-drill-pg-*`, and the suite's own session server `agentcms-test-pg-*` started
+    by `tests/pg.py:start_docker_postgres` for the whole run. Measured on 2026-09-27 for
+    the drill family: 30 such orphans (19 from 2026-09-25, 9 from 2026-09-26, all
+    0.00-0.02% CPU, no compose labels). The datadir reaper could not see them -- it globs
+    `agentcms-drill-pgdata-*` and was reached only from the local-initdb branch, which a
+    docker-capable machine never takes -- and nothing on the suite's own path reaped
+    `agentcms-test-pg-*` at all. The suite family had no measured orphan that day (the host
+    carried 0 of both), so its selection was proved by deliberately leaving a fresh
+    `agentcms-test-pg-*` behind and watching the reap take it.
+
+    The selector is the *name* contract, not the image: reaping by image would also match a
+    self-hoster's own `postgres:16-alpine` stack, where `docker rm -f` is data loss.
+    `tests/pg.py` owns the contract for both families -- the drill imports it instead of
+    keeping a private copy, so a third family has one place to be added.
     """
-    from tests.test_backup_restore_drill import _reap_orphan_containers
-
+    # Both call sites, in source, before any import: the contract must have one home, and
+    # each family's path must reach it *above* its strategy branch (inside a branch, the
+    # machines that pick another strategy never run it -- that placement was the bug).
     source = (REPO_ROOT / "tests" / "test_backup_restore_drill.py").read_text()
     call = "containers = _reap_orphan_containers()"
     assert call in source, (
-        "a throwaway server must reap the last killed run's orphaned containers before it starts"
+        "a throwaway drill server must reap the last killed run's orphaned containers before it starts"
     )
-    # ...and the reap must sit *before* the strategy branches. Inside the local-initdb
-    # branch a docker-capable machine never reaches it -- that placement is the bug.
     assert source.index(call) < source.index("if docker_available():"), (
         "the container reap must run regardless of which strategy the machine picks"
     )
+
+    pg_source = (REPO_ROOT / "tests" / "pg.py").read_text()
+    suite_call = "orphans = _reap_orphan_containers()"
+    missing: list[str] = []
+    if 'SUITE_CONTAINER_PREFIX = "agentcms-test-pg-"' not in pg_source:
+        missing.append("tests/pg.py must name the suite's own family: agentcms-test-pg-")
+    if "def _is_reapable_test_container" not in pg_source:
+        missing.append("tests/pg.py must own the selection: def _is_reapable_test_container")
+    if suite_call not in pg_source:
+        missing.append(f"start_ephemeral_postgres must reap the suite's orphans too: {suite_call}")
+    assert not missing, "; ".join(missing)
+    suite_body = pg_source[pg_source.index("def start_ephemeral_postgres") :]
+    assert suite_body.index(suite_call) < suite_body.index("if docker_available():"), (
+        "the suite's reap must sit above the strategy branch, not inside the Docker one"
+    )
+
+    from tests.pg import _is_reapable_test_container, _reap_orphan_containers
 
     removed: list[str] = []
 
@@ -847,20 +874,36 @@ def test_drill_reaps_the_containers_a_killed_run_left_behind() -> None:
         removed.append(name)
         return 0
 
+    expected = ["agentcms-drill-pg-1a2b3c4d", "agentcms-test-pg-9f8e7d6c"]
     reaped = _reap_orphan_containers(
         min_age_seconds=600,
         entries=[
-            ("agentcms-drill-pg-1a2b3c4d", 7200.0),  # a killed run's leftover: stale
-            ("agentcms-drill-pg-5e6f7a8b", 5.0),  # the run in flight: fresh, hands off
+            ("agentcms-drill-pg-1a2b3c4d", 7200.0),  # a killed drill run's leftover: stale
+            ("agentcms-test-pg-9f8e7d6c", 7200.0),  # a killed suite run's leftover: stale
+            ("agentcms-drill-pg-5e6f7a8b", 5.0),  # the drill in flight: fresh, hands off
+            ("agentcms-test-pg-5e6f7a8b", 5.0),  # the suite in flight: fresh, hands off
             ("agentcms-drill-pg-c0ffee00", 599.9),  # just under the threshold: not yet
-            ("agentcms-prod-pg-1", 86400.0),  # not ours -- the name is the contract
+            ("agentcms-test-pg-c0ffee00", 599.9),  # just under the threshold: not yet
+            ("ws2pg", 86400.0),  # a peer agent's own postgres: not ours
+            ("agentcms-prod-pg-1", 86400.0),  # a self-hoster's stack: never touch
         ],
         remover=fake_remover,
     )
-    assert reaped == ["agentcms-drill-pg-1a2b3c4d"], reaped
-    assert removed == ["agentcms-drill-pg-1a2b3c4d"], (
-        "only a stale throwaway drill container may be force-removed"
-    )
+    assert reaped == expected, reaped
+    assert removed == expected, "only a stale throwaway container may be force-removed"
+
+    for name in expected:
+        assert _is_reapable_test_container(name), name
+    for foreign in (
+        "ws2pg",
+        "pgci3",
+        "agentcms-repro-pg",
+        "engpg16",
+        "alfred-drill-repro",
+        "ac-peerprobe",
+        "agentcms-prod-pg-1",
+    ):
+        assert not _is_reapable_test_container(foreign), f"not ours, never reap: {foreign}"
 
 
 def test_selfhost_e2e_reads_base64url_capability_tokens_whole() -> None:
