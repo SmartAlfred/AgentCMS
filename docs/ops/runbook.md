@@ -727,3 +727,54 @@ drill can invent.
 
 **Next drill due 2026-12-25**, and after any change to the rules, the
 Alertmanager route or the channel.
+
+---
+
+## Dated dead-man's-switch drill — sleep vs death, and what a page actually means (2026-09-27)
+
+Full log: `dms-sleep-vs-death-drill-2026-09-27.md`. The switch is the off-host delayed alarm introduced
+by the 2026-09-25 public-path drill: the host pushes a heartbeat over outbound HTTPS and re-arms a
+server-side ntfy alarm, so the timer lives off-host and a page fires with no inbound URL. Every timestamp
+below is from `date -u +%FT%TZ` in the shell that ran the command.
+
+**This host legitimately sleeps, so a "silent host" page is usually a sleep gap, not an outage.** The
+worker sleeps in clamshell/"Maintenance Sleep" chunks (pmset: 902 s, 903 s, 532 s, 338 s …): uptime
+6 d 9 h but `time.monotonic()` (mach timer, excludes sleep) = 2 d 17 h, i.e. asleep **~57 % of wall
+time**. A 15-minute delayed alarm therefore fires on almost every long sleep. Measured 2026-09-27, the
+8 priority-5 pages in 12 h were: **5 sleep gaps**, **2 a beat race** (two beats ~1 s apart orphaned an
+armed alarm, which then fired after only 5 m 00 s of silence — now harmless because every beat cancels a
+*ledger* of pending alarm ids, `armed.tsv`, instead of just the last one), and **1 the deliberate induced
+silence of this drill**. The 15-minute window is kept: 30 min would have suppressed 4 of the 8, 60 min 5,
+120 min 7 — while delaying a real death by exactly the same amount. Detection stays short; the ambiguity
+is resolved by verdict instead of by a longer window.
+
+**What a page means, and how it resolves.** A page no longer asserts "host dead or tunnel down". It says
+the host has stopped publishing and that nothing running on the host can tell sleep from death while it
+is silent. ntfy `DELETE` does **not** erase a delivered message from the replay cache (a fresh subscriber
+replaying `since=all` still sees the retracted page; live clients drop it on the `message_delete` event),
+so the load-bearing part is the explicit **priority-3 `RESOLVED` notice** published by the first beat
+after the page (`dms_resolve.py`), quoting T_last_beat / T_page / T_resume and a verdict: `ASLEEP`
+(benign sleep gap), `FALSE_PAGE` (the switch itself was at fault — heartbeats flowed while the alarm was
+armed), `AWAKE` (heartbeat resumed and the host was not asleep — investigate), `UNKNOWN` (no sleep
+accounting on this host). Measured 2026-09-27: silence → page **12 m 29 s**, page → resolve **99 s**, and
+a **22 m 01 s clean window crossing an alarm boundary produced 0 pages**.
+
+**Still unproven, stated plainly.**
+
+1. **No human has confirmed a subscription to the topic.** Delivery is proven (message ids, delivery
+   timestamps, read back from the service); receipt is not. Exact ask: one person subscribes to the
+   topic, then we re-drill.
+2. **The automatic resolve on a full 15-minute window has not been observed yet.** Both attempts were cut
+   short at +4 m 39 s and +12 m 50 s by restore watchdogs left over from the previous attempt firing while
+   the switch was down. The verdict path itself has been exercised (`FALSE_PAGE`, page 15:29:59Z → resolve
+   15:31:38Z), but not the plain "silence reaches the configured window" case.
+3. **ntfy's free daily quota (250 messages per visitor) is a real ceiling for a 5-minute beat.** Two
+   published messages per beat exceeds it, and on 2026-09-27T18:44:12Z the arm was refused with
+   `42908 daily message quota reached: limit reached` — the switch sat **OPEN** (no alarm armed, no page
+   possible) until the quota returned. The beat now arms the new alarm *before* cancelling the old one and
+   writes `switch_open` / `publish_fail` markers that `dms-status.sh` prints, so the condition is visible
+   instead of silent; cutting the message volume per beat (or moving to a prober account) is an owner
+   decision, not a code change.
+
+*Next drill due: 2026-12-25 (quarterly), or after any change to the beat interval, the window, the topic
+or the resolver.*
