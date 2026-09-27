@@ -465,13 +465,23 @@ def _postgres_server_inner(db_name: str):
         reset_settings_cache()
         dispose_engine()
 
-        yield {
-            "url": url,
-            "admin_url": admin_url,
-            "db_name": db_name,
-            "cleanup": cleanup,
-            "mode": "docker",
-        }
+        # `finally`, not just the caller's `cleanup`: an exception between the server
+        # coming up and the teardown -- a missing `psycopg` in the interpreter the drill
+        # ran under, a failed `alembic upgrade`, an assertion -- used to skip `docker rm
+        # -f` entirely, because a generator-based context manager never resumes after a
+        # throw at `yield`. `--rm` does not save it either: it fires when the *run* ends,
+        # and a killed process never ends its run. Reproduced 2026-09-27: three drills
+        # errored during setup and left three containers `Up` holding ports 62162-62164.
+        try:
+            yield {
+                "url": url,
+                "admin_url": admin_url,
+                "db_name": db_name,
+                "cleanup": cleanup,
+                "mode": "docker",
+            }
+        finally:
+            cleanup()
         return
 
     # Strategy 3: Local initdb/pg_ctl
@@ -577,13 +587,19 @@ def _postgres_server_inner(db_name: str):
     reset_settings_cache()
     dispose_engine()
 
-    yield {
-        "url": url,
-        "admin_url": admin_url,
-        "db_name": db_name,
-        "cleanup": cleanup,
-        "mode": f"initdb ({version})",
-    }
+    # Same hole, same fix as the Docker branch above: the local-initdb path may only
+    # leak a datadir, but an errored drill leaves a postmaster plus a SysV segment, and
+    # 32 of those wedge every `initdb` on the machine (`kern.sysv.shmmni`).
+    try:
+        yield {
+            "url": url,
+            "admin_url": admin_url,
+            "db_name": db_name,
+            "cleanup": cleanup,
+            "mode": f"initdb ({version})",
+        }
+    finally:
+        cleanup()
 
 
 def run_alembic(*args: str, database_url: str) -> subprocess.CompletedProcess[str]:
@@ -1161,6 +1177,95 @@ class TestDrillIsolation:
         finally:
             if planted:
                 _run_ddl(admin_url, f'DROP DATABASE IF EXISTS "{probe}" WITH (FORCE)')
+
+
+class TestThrowawayServerTeardown:
+    """A drill that errors must still take its throwaway server down.
+
+    The Docker branch of ``_postgres_server_inner`` yielded without a
+    ``try``/``finally``, so teardown was the *caller's* job. A generator-based
+    context manager never resumes after an exception is thrown in at ``yield``,
+    so any error between the server coming up and the teardown skipped
+    ``docker rm -f`` and left the container ``Up`` with its published host port
+    held for good. Reproduced live 2026-09-27: the local system interpreter has
+    no ``psycopg``, all three drill tests errored during setup, and three
+    ``agentcms-drill-pg-*`` containers stayed ``Up`` holding host ports
+    62162-62164 (``docker ps -a --filter name=agentcms-drill-pg``). ``--rm``
+    does not cover this: it fires when the *run* ends, and a killed or errored
+    process never ends its run. The local-initdb branch had the identical hole,
+    where the leftover is a postmaster plus a SysV shared-memory segment -- the
+    thing that wedges ``initdb`` machine-wide at 32.
+
+    Both tests drive the real context manager with a stubbed ``_run``, so they
+    need neither Docker nor a PostgreSQL install, and they fail on the pre-fix
+    tree because no teardown command is recorded at all.
+    """
+
+    @staticmethod
+    def _stub_run(calls: list[list[str]]):
+        def fake_run(cmd, **kwargs):
+            recorded = [str(part) for part in cmd]
+            calls.append(recorded)
+            return subprocess.CompletedProcess(recorded, 0, stdout="", stderr="")
+
+        return fake_run
+
+    @staticmethod
+    def _prepare(monkeypatch, calls: list[list[str]], docker: bool) -> None:
+        from tests import test_backup_restore_drill as drill
+
+        monkeypatch.setattr(drill, "_run", TestThrowawayServerTeardown._stub_run(calls))
+        monkeypatch.setattr(drill, "docker_available", lambda: docker)
+        monkeypatch.setattr(drill, "wait_for_pg", lambda *args, **kwargs: True)
+        monkeypatch.setattr(drill, "_reap_orphan_servers", lambda *args, **kwargs: [])
+        monkeypatch.setattr(drill, "_reap_orphan_containers", lambda *args, **kwargs: [])
+        monkeypatch.setattr(drill, "_local_pg_bin", lambda: Path("/nonexistent-pg-bin"))
+        monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+        monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres@127.0.0.1:1/postgres")
+
+    def test_a_drill_that_errors_still_takes_its_container_down(self, monkeypatch) -> None:
+        """No error may leave a throwaway container holding a host port."""
+        from tests import test_backup_restore_drill as drill
+
+        calls: list[list[str]] = []
+        self._prepare(monkeypatch, calls, docker=True)
+
+        with (
+            pytest.raises(RuntimeError, match="drill blew up before teardown"),
+            drill._postgres_server_inner("agentcms_drill_teardown") as info,
+        ):
+            assert info["mode"] == "docker", info["mode"]
+            raise RuntimeError("drill blew up before teardown")
+
+        removed = [cmd[3] for cmd in calls if cmd[:3] == ["docker", "rm", "-f"]]
+        assert any(name.startswith("agentcms-drill-pg-") for name in removed), (
+            "a drill that errors before teardown must still `docker rm -f` its container, "
+            f"or the container holds its host port forever; docker calls: {calls}"
+        )
+
+    def test_a_drill_that_errors_still_stops_its_initdb_server(self, monkeypatch) -> None:
+        """The local-initdb branch leaks a postmaster + a shm segment the same way."""
+        from tests import test_backup_restore_drill as drill
+
+        calls: list[list[str]] = []
+        self._prepare(monkeypatch, calls, docker=False)
+
+        with (
+            pytest.raises(RuntimeError, match="drill blew up before teardown"),
+            drill._postgres_server_inner("agentcms_drill_teardown") as info,
+        ):
+            assert info["mode"].startswith("initdb"), info["mode"]
+            raise RuntimeError("drill blew up before teardown")
+
+        started = [cmd for cmd in calls if cmd[0].endswith("pg_ctl") and "start" in cmd and "-D" in cmd]
+        assert started, f"the drill never started a local server: {calls}"
+        datadir = Path(started[0][started[0].index("-D") + 1])
+        stopped = [cmd for cmd in calls if cmd[0].endswith("pg_ctl") and "-m" in cmd]
+        assert stopped, (
+            "a drill that errors before teardown must still stop its throwaway server, "
+            f"or it leaves a postmaster holding a shared-memory segment; calls: {calls}"
+        )
+        assert not datadir.exists(), f"the drill must delete its datadir, {datadir} survived"
 
 
 if __name__ == "__main__":
